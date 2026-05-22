@@ -1,0 +1,10 @@
+{
+  "name": "homeai",
+  "private": true,
+  "scripts": {
+    "dev:frontend": "npm run dev --prefix frontend",
+    "dev:backend": "npm run sandbox --prefix backend",
+    "build:frontend": "npm run build --prefix frontend",
+    "seed:catalog": "npm run seed:catalog --prefix backend"
+  }
+}
