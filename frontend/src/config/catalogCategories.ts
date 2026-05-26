@@ -5,6 +5,8 @@ export type CatalogSectionId =
   | 'wall-cabinets'
   | 'countertops'
   | 'vanities'
+  | 'toilets'
+  | 'showers'
   | 'other';
 
 export const CATALOG_SECTIONS: {
@@ -32,10 +34,43 @@ export const CATALOG_SECTIONS: {
     title: 'Vanities',
     description: 'Bathroom base storage',
   },
+  {
+    id: 'toilets',
+    title: 'Toilets',
+    description: 'Floor-mounted toilets',
+  },
+  {
+    id: 'showers',
+    title: 'Showers & tubs',
+    description: 'Tubs, combos, and walk-in showers',
+  },
+  {
+    id: 'other',
+    title: 'Other',
+    description: 'Miscellaneous catalog items',
+  },
 ];
+
+/** Unified catalog chrome — sage accent, not per-section rainbow */
+export const SECTION_UI = {
+  header: 'catalog-section-header',
+  border: 'border-stone-200',
+  active: 'catalog-item-active',
+  badge: 'bg-stone-100 text-stone-600',
+} as const;
+
+export function isToiletItem(item: CatalogItem): boolean {
+  return item.category === 'toilet';
+}
+
+export function isShowerItem(item: CatalogItem): boolean {
+  return item.category === 'shower';
+}
 
 export function catalogSectionForItem(item: CatalogItem): CatalogSectionId {
   if (item.category === 'countertop') return 'countertops';
+  if (item.category === 'toilet') return 'toilets';
+  if (item.category === 'shower') return 'showers';
   if (item.category === 'vanity') return 'vanities';
   if (item.subcategory === 'wall' || item.category === 'wall-cabinet') return 'wall-cabinets';
   if (item.subcategory === 'base' || item.category === 'base-cabinet') return 'base-cabinets';

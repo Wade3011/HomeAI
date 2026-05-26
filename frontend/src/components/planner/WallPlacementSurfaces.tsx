@@ -59,8 +59,8 @@ function WallGrid({
         args={size}
         cellSize={CABINET_GRID_FT}
         sectionSize={1}
-        cellColor={highlighted ? '#60a5fa' : '#93c5fd'}
-        sectionColor={highlighted ? '#2563eb' : '#3b82f6'}
+        cellColor={highlighted ? '#9fb3c8' : '#c5d4dc'}
+        sectionColor={highlighted ? '#5c7a6a' : '#9fb3c8'}
         fadeDistance={40}
         rotation={[Math.PI / 2, 0, 0]}
         infiniteGrid={false}
@@ -86,18 +86,22 @@ function WallClickPlane({
 }) {
   const noopRaycast = useMemo(() => () => null, []);
 
-  const handleClick = (e: ThreeEvent<MouseEvent>) => {
+  const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
     if (!enabled) return;
     e.stopPropagation();
     onPlace(e.point.x, e.point.z, wall);
   };
+
+  const eventPriority = enabled ? 2 : 0;
 
   return (
     <mesh
       position={position}
       rotation={rotation}
       raycast={enabled ? undefined : noopRaycast}
-      onClick={enabled ? handleClick : undefined}
+      onPointerDown={enabled ? handlePointerDown : undefined}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      {...({ eventPriority } as any)}
     >
       <planeGeometry args={size} />
       <meshStandardMaterial visible={false} />

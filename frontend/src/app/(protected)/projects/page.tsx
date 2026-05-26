@@ -26,30 +26,32 @@ export default function ProjectsPage() {
       });
       return { project, room };
     },
-    onSuccess: ({ project, room }) => {
+    onSuccess: ({ project }) => {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
-      router.push(`/planner/${project.projectId}/${room.roomId}`);
+      router.push(`/projects/${project.projectId}`);
     },
   });
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">
-      <div className="mb-8 flex items-center justify-between">
+      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-zinc-900">Your projects</h1>
-          <p className="mt-1 text-zinc-600">Create a home project and open the 3D planner.</p>
+          <h1 className="text-2xl font-bold text-slate-900">Your projects</h1>
+          <p className="mt-1 text-slate-600">Create a home project and open the 3D planner.</p>
         </div>
         <button
           type="button"
           onClick={() => createMutation.mutate()}
           disabled={createMutation.isPending}
-          className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+          className="btn-primary disabled:opacity-50"
         >
-          {createMutation.isPending ? 'Creating…' : 'New project'}
+          {createMutation.isPending ? 'Creating…' : '+ New project'}
         </button>
       </div>
 
-      {isLoading && <p className="text-zinc-600">Loading…</p>}
+      {isLoading && (
+        <p className="animate-pulse text-slate-500">Loading projects…</p>
+      )}
 
       <ul className="space-y-3">
         {projects.map((project) => (
@@ -58,10 +60,28 @@ export default function ProjectsPage() {
       </ul>
 
       {!isLoading && projects.length === 0 && (
-        <p className="rounded-xl border border-dashed border-zinc-300 bg-white p-8 text-center text-zinc-600">
-          No projects yet. Click &quot;New project&quot; to start.
-        </p>
+        <div className="rounded-2xl border-2 border-dashed border-stone-300 bg-stone-50 p-10 text-center">
+          <p className="text-slate-600">No projects yet.</p>
+          <button
+            type="button"
+            onClick={() => createMutation.mutate()}
+            disabled={createMutation.isPending}
+            className="btn-primary mt-4"
+          >
+            Create your first project
+          </button>
+        </div>
       )}
+
+      <p className="mt-8 text-center text-sm text-slate-500">
+        Or{' '}
+        <Link
+          href="/planner/dev-project-1/dev-room-kitchen"
+          className="font-semibold text-stone-800 hover:text-stone-600"
+        >
+          jump into the demo kitchen →
+        </Link>
+      </p>
     </main>
   );
 }
@@ -75,19 +95,23 @@ function ProjectRow({ projectId, name }: { projectId: string; name: string }) {
   const firstRoom = rooms[0];
 
   return (
-    <li className="rounded-xl border border-zinc-200 bg-white p-4">
-      <div className="font-medium text-zinc-900">{name}</div>
-      <p className="text-sm text-zinc-500">{rooms.length} room(s)</p>
-      {firstRoom ? (
-        <Link
-          href={`/planner/${projectId}/${firstRoom.roomId}`}
-          className="mt-3 inline-block text-sm font-medium text-blue-600 hover:underline"
-        >
-          Open planner →
-        </Link>
-      ) : (
-        <p className="mt-2 text-sm text-zinc-500">No rooms</p>
-      )}
+    <li className="group card-surface overflow-hidden transition hover:shadow-[var(--shadow-glow)]">
+      <div className="h-0.5 bg-[var(--sage-600)]" />
+      <div className="p-4">
+        <div className="font-semibold text-slate-900">{name}</div>
+        <p className="text-sm text-slate-500">{rooms.length} room(s)</p>
+        {firstRoom ? (
+          <Link
+            href={`/projects/${projectId}`}
+            className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-[var(--sage-700)] transition group-hover:text-[var(--sage-800)]"
+          >
+            Floor plan &amp; rooms
+            <span aria-hidden>→</span>
+          </Link>
+        ) : (
+          <p className="mt-2 text-sm text-slate-500">No rooms</p>
+        )}
+      </div>
     </li>
   );
 }

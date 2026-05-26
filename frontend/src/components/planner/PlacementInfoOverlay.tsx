@@ -1,25 +1,25 @@
 'use client';
 
-import type { CatalogItem, Placement, Room } from '@/types';
-import { catalogDimensionsFt, orientedDimensions } from '@/components/planner/placementCollision';
-
-function formatFt(value: number) {
-  const rounded = Math.round(value * 10) / 10;
-  return Number.isInteger(rounded) ? `${rounded}` : rounded.toFixed(1);
-}
+import type { CustomItemSpec, Placement, Room } from '@/types';
+import type { ResolvedPlacementItem } from '@/lib/placementItem';
+import { formatFt } from '@/components/planner/SceneDimensions';
+import { orientedDimensions } from '@/components/planner/placementCollision';
+import { CustomPlacementEditor } from '@/components/planner/CustomPlacementEditor';
 
 export function PlacementInfoOverlay({
   room,
   placement,
-  item,
+  resolved,
   onRotateLeft,
   onRotateRight,
+  onCustomChange,
 }: {
   room: Room;
   placement: Placement | null;
-  item: CatalogItem | null;
+  resolved: ResolvedPlacementItem | null;
   onRotateLeft: () => void;
   onRotateRight: () => void;
+  onCustomChange?: (patch: Partial<CustomItemSpec>) => void;
 }) {
   const rotationDeg = placement
     ? (() => {
@@ -29,9 +29,8 @@ export function PlacementInfoOverlay({
     : 0;
 
   let wallDistances: { left: number; right: number; back: number; front: number } | null = null;
-  if (placement && item) {
-    const { widthFt, depthFt } = catalogDimensionsFt(item);
-    const o = orientedDimensions(widthFt, depthFt, placement.rotationY);
+  if (placement && resolved) {
+    const o = orientedDimensions(resolved.widthFt, resolved.depthFt, placement.rotationY);
     wallDistances = {
       left: placement.positionX,
       right: room.widthFt - placement.positionX - o.widthFt,
@@ -41,41 +40,64 @@ export function PlacementInfoOverlay({
   }
 
   return (
-    <div className="pointer-events-auto absolute right-3 top-3 z-10 max-w-[220px] rounded-lg border border-zinc-200 bg-white/95 p-3 text-xs text-zinc-700 shadow-md">
-      <p className="font-semibold text-zinc-900">Room</p>
-      <p>
-        {formatFt(room.widthFt)} ft wide × {formatFt(room.depthFt)} ft deep ×{' '}
-        {formatFt(room.heightFt)} ft high
-      </p>
+    <div className="pointer-events-auto absolute right-3 top-3 z-10 max-w-[260px] overflow-hidden rounded-xl border border-stone-200 bg-white shadow-lg">
+      <div className="panel-header px-3 py-2 text-xs font-semibold">Room &amp; selection</div>
+      <div className="px-3 py-2 text-xs text-stone-600">
+        <p>
+          {formatFt(room.widthFt)} ft × {formatFt(room.depthFt)} ft × {formatFt(room.heightFt)} ft
+        </p>
 
-      {placement && item && wallDistances && (
-        <>
-          <p className="mt-2 font-semibold text-zinc-900">{item.name}</p>
-          <ul className="mt-1 space-y-0.5 text-zinc-600">
-            <li>Left wall: {formatFt(wallDistances.left)} ft</li>
-            <li>Right wall: {formatFt(wallDistances.right)} ft</li>
-            <li>Back wall: {formatFt(wallDistances.back)} ft</li>
-            <li>Front wall: {formatFt(wallDistances.front)} ft</li>
-            <li>Facing: {rotationDeg}°</li>
-          </ul>
-          <div className="mt-2 flex gap-1">
-            <button
-              type="button"
-              onClick={onRotateLeft}
-              className="flex-1 rounded border border-zinc-200 px-2 py-1.5 text-[11px] font-medium hover:bg-zinc-50"
-            >
-              ↺ 90°
-            </button>
-            <button
-              type="button"
-              onClick={onRotateRight}
-              className="flex-1 rounded border border-zinc-200 px-2 py-1.5 text-[11px] font-medium hover:bg-zinc-50"
-            >
-              90° ↻
-            </button>
-          </div>
-        </>
-      )}
+        {placement && resolved && wallDistances ? (
+          <>
+            <p className="mt-2 font-semibold text-[var(--sage-800)]">{resolved.label}</p>
+            {resolved.isCatalog && (
+              <p className="text-[10px] text-stone-400">Catalog item — fixed size &amp; price</p>
+            )}
+            <div className="mt-2 grid grid-cols-2 gap-1.5">
+              {(
+                [
+                  ['Left', wallDistances.left],
+                  ['Right', wallDistances.right],
+                  ['Back', wallDistances.back],
+                  ['Front', wallDistances.front],
+                ] as const
+              ).map(([side, ft]) => (
+                <div
+                  key={side}
+                  className="rounded-md bg-[var(--sage-50)] px-2 py-1 text-center"
+                >
+                  <span className="block text-[10px] font-medium uppercase text-stone-500">
+                    {side}
+                  </span>
+                  <span className="font-semibold text-[var(--sage-800)]">{formatFt(ft)} ft</span>
+                </div>
+              ))}
+            </div>
+            <p className="mt-2 text-stone-500">Facing {rotationDeg}°</p>
+            <div className="mt-2 flex gap-1">
+              <button
+                type="button"
+                onClick={onRotateLeft}
+                className="flex-1 rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-[11px] font-medium text-stone-700 transition hover:bg-[var(--sage-50)]"
+              >
+                ↺ 90°
+              </button>
+              <button
+                type="button"
+                onClick={onRotateRight}
+                className="flex-1 rounded-lg border border-[var(--sage-600)] bg-[var(--sage-50)] px-2 py-1.5 text-[11px] font-medium text-[var(--sage-800)] transition hover:bg-[var(--sage-100)]"
+              >
+                90° ↻
+              </button>
+            </div>
+            {resolved.isCustom && placement.customItem && onCustomChange && (
+              <CustomPlacementEditor customItem={placement.customItem} onChange={onCustomChange} />
+            )}
+          </>
+        ) : (
+          <p className="mt-2 text-stone-500">Select an item to see details.</p>
+        )}
+      </div>
     </div>
   );
 }

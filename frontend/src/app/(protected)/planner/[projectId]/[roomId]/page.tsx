@@ -10,7 +10,7 @@ export default function PlannerPage({
 }: {
   params: Promise<{ projectId: string; roomId: string }>;
 }) {
-  const { roomId } = use(params);
+  const { projectId, roomId } = use(params);
 
   const { data: placements = [], isLoading } = useQuery({
     queryKey: ['placements', roomId],
@@ -21,5 +21,11 @@ export default function PlannerPage({
     return <p className="p-8 text-zinc-600">Loading planner…</p>;
   }
 
-  return <PlannerWorkspace roomId={roomId} initialPlacements={placements} />;
+  return (
+    <PlannerWorkspace
+      projectId={projectId}
+      roomId={roomId}
+      initialPlacements={placements}
+    />
+  );
 }

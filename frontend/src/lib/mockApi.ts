@@ -95,6 +95,8 @@ export async function handleMockApi(
           widthFt: body.widthFt != null ? Number(body.widthFt) : room.widthFt,
           depthFt: body.depthFt != null ? Number(body.depthFt) : room.depthFt,
           heightFt: body.heightFt != null ? Number(body.heightFt) : room.heightFt,
+          layoutX: body.layoutX != null ? Number(body.layoutX) : room.layoutX,
+          layoutZ: body.layoutZ != null ? Number(body.layoutZ) : room.layoutZ,
         });
         if (!updated) return json(404, { error: 'not_found', message: 'Room not found' });
         return json(200, { room: updated });

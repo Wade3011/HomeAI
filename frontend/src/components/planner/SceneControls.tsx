@@ -10,25 +10,32 @@ function wantsPan(e: MouseEvent | PointerEvent): boolean {
   return e.shiftKey || e.altKey || e.button === 1 || e.button === 2;
 }
 
-function applyMouseBindings(controls: OrbitControlsImpl, panWithLeft: boolean) {
-  controls.mouseButtons = {
-    LEFT: panWithLeft ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE,
-    MIDDLE: THREE.MOUSE.PAN,
-    RIGHT: THREE.MOUSE.PAN,
-  };
-}
+const DEFAULT_MOUSE_BUTTONS = {
+  LEFT: THREE.MOUSE.ROTATE,
+  MIDDLE: THREE.MOUSE.PAN,
+  RIGHT: THREE.MOUSE.PAN,
+} as const;
+
+const DEFAULT_TOUCHES = {
+  ONE: THREE.TOUCH.ROTATE,
+  TWO: THREE.TOUCH.DOLLY_PAN,
+} as const;
 
 export function SceneControls({
   target,
   isDraggingItem,
+  placementMode = false,
 }: {
   target: [number, number, number];
-  /** True while dragging a cabinet — temporarily disables orbit */
   isDraggingItem: boolean;
+  /** Catalog item armed — disable orbit so clicks place cabinets */
+  placementMode?: boolean;
 }) {
   const ref = useRef<OrbitControlsImpl>(null);
   const panWithLeftRef = useRef(false);
-  const { gl } = useThree();
+  const { gl, invalidate } = useThree();
+
+  const orbitEnabled = !isDraggingItem && !placementMode;
 
   useEffect(() => {
     const controls = ref.current;
@@ -36,9 +43,13 @@ export function SceneControls({
     if (!controls || !el) return;
 
     const syncBindings = (e?: MouseEvent | PointerEvent) => {
-      const pan =
-        panWithLeftRef.current || (e !== undefined && wantsPan(e));
-      applyMouseBindings(controls, pan);
+      if (!orbitEnabled) return;
+      const pan = panWithLeftRef.current || (e !== undefined && wantsPan(e));
+      controls.mouseButtons = {
+        LEFT: pan ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE,
+        MIDDLE: THREE.MOUSE.PAN,
+        RIGHT: THREE.MOUSE.PAN,
+      };
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -71,12 +82,31 @@ export function SceneControls({
       window.removeEventListener('blur', onBlur);
       el.removeEventListener('pointerdown', onPointerDown);
     };
-  }, [gl]);
+  }, [gl, orbitEnabled]);
 
   useEffect(() => {
     const controls = ref.current;
     if (!controls) return;
-    controls.enabled = !isDraggingItem;
+
+    controls.enabled = orbitEnabled;
+    controls.enableZoom = true;
+
+    if (placementMode) {
+      controls.enableRotate = false;
+      controls.enablePan = false;
+      controls.mouseButtons = {
+        LEFT: THREE.MOUSE.PAN,
+        MIDDLE: THREE.MOUSE.PAN,
+        RIGHT: THREE.MOUSE.PAN,
+      };
+      controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.PAN };
+    } else {
+      controls.enableRotate = true;
+      controls.enablePan = true;
+      controls.mouseButtons = { ...DEFAULT_MOUSE_BUTTONS };
+      controls.touches = { ...DEFAULT_TOUCHES };
+    }
+
     controls.listenToKeyEvents(gl.domElement);
     controls.keys = {
       LEFT: 'ArrowLeft',
@@ -85,15 +115,20 @@ export function SceneControls({
       BOTTOM: 'ArrowDown',
     };
     controls.target.set(...target);
-  }, [gl, target, isDraggingItem]);
+
+    const onChange = () => invalidate();
+    controls.addEventListener('change', onChange);
+    return () => controls.removeEventListener('change', onChange);
+  }, [gl, target, orbitEnabled, placementMode, invalidate]);
 
   return (
     <OrbitControls
       ref={ref}
       makeDefault
       target={target}
-      enablePan
-      enableRotate
+      enabled={orbitEnabled}
+      enablePan={orbitEnabled}
+      enableRotate={orbitEnabled}
       enableZoom
       screenSpacePanning
       panSpeed={1.4}
@@ -103,10 +138,7 @@ export function SceneControls({
       maxPolarAngle={Math.PI / 2 - 0.04}
       minDistance={4}
       maxDistance={Math.max(target[0], target[2]) * 4}
-      touches={{
-        ONE: THREE.TOUCH.ROTATE,
-        TWO: THREE.TOUCH.DOLLY_PAN,
-      }}
+      touches={placementMode ? { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.PAN } : DEFAULT_TOUCHES}
     />
   );
 }

@@ -1,8 +1,12 @@
 /**
  * Generates frontend/src/data/catalog.json
  * Run: npm run generate:catalog  (or node scripts/generate-catalog.mjs)
- * Prices ≈ 2024–2025 US retail list averages for planning (not installed quotes).
+ * Material list prices calibrated May 2026 from Menards PDP dimensions + national
+ * retailer shelf pricing (Home Depot / manufacturer MSRP) where Menards blocks bots.
+ * Replace with API overrides via priceSource when available.
  */
+const PRICE_CALIBRATED_AT = '2026-05-19';
+const PRICE_SOURCE = 'manual';
 
 import { mkdirSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
@@ -16,7 +20,7 @@ const WALL_WIDTHS = [9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 42];
 const COUNTER_WIDTHS = [25, 30, 36, 42, 48, 60, 72, 84, 96, 108, 120];
 const VANITY_WIDTHS = [18, 24, 30, 36, 42, 48, 60, 72];
 
-/** @type {{ id: string, name: string, tier: string, base24: number, wall24: number, finish: string }[]} */
+/** @type {{ id: string, name: string, tier: string, base24: number, wall24: number, finish: string, baseDepthIn?: number, wallDepthIn?: number, baseHeightIn?: number, wallHeightIn?: number, extraBaseWidths?: number[], extraWallWidths?: number[] }[]} */
 const CABINET_BRANDS = [
   // Stock / RTA
   { id: 'ikea', name: 'IKEA', tier: 'stock', base24: 139, wall24: 89, finish: 'SEKTION White' },
@@ -35,8 +39,90 @@ const CABINET_BRANDS = [
   { id: 'wolf-home-products', name: 'Wolf Home Products', tier: 'stock', base24: 198, wall24: 128, finish: 'Black Walnut' },
   { id: 'norcraft', name: 'Norcraft', tier: 'stock', base24: 188, wall24: 122, finish: 'Canvas' },
   { id: 'masterbrand-ultra', name: 'Ultracraft (MasterBrand)', tier: 'stock', base24: 215, wall24: 138, finish: 'Full Overlay White' },
+  // Menards® Klearvue — 24"D×30"H bases, 14"D×30"H walls (Klearvue config guide / Menards PDP)
+  {
+    id: 'klearvue-menards',
+    name: 'Klearvue (Menards)',
+    tier: 'stock',
+    base24: 199,
+    wall24: 129,
+    finish: 'Assembled Entry Style',
+    baseDepthIn: 24,
+    wallDepthIn: 14,
+    baseHeightIn: 30,
+    wallHeightIn: 30,
+    extraBaseWidths: [48],
+    extraWallWidths: [48],
+  },
+  {
+    id: 'klearvue-visby',
+    name: 'Klearvue Visby (Menards)',
+    tier: 'stock',
+    base24: 219,
+    wall24: 139,
+    finish: 'Golden Oak',
+    baseDepthIn: 24,
+    wallDepthIn: 14,
+    baseHeightIn: 30,
+    wallHeightIn: 30,
+    extraWallWidths: [48],
+  },
+  {
+    id: 'klearvue-malmo',
+    name: 'Klearvue Malmo (Menards)',
+    tier: 'stock',
+    base24: 225,
+    wall24: 142,
+    finish: 'Suede',
+    baseDepthIn: 24,
+    wallDepthIn: 14,
+    baseHeightIn: 30,
+    wallHeightIn: 30,
+  },
+  {
+    id: 'klearvue-stromma',
+    name: 'Klearvue Stromma (Menards)',
+    tier: 'stock',
+    base24: 229,
+    wall24: 145,
+    finish: 'Midnight Blue',
+    baseDepthIn: 24,
+    wallDepthIn: 14,
+    baseHeightIn: 30,
+    wallHeightIn: 30,
+  },
+  {
+    id: 'klearvue-linsell',
+    name: 'Klearvue Linsell (Menards)',
+    tier: 'stock',
+    base24: 215,
+    wall24: 138,
+    finish: 'Ivory',
+    baseDepthIn: 24,
+    wallDepthIn: 14,
+    baseHeightIn: 30,
+    wallHeightIn: 30,
+  },
+  {
+    id: 'quality-one-menards',
+    name: 'Quality One (Menards)',
+    tier: 'stock',
+    base24: 165,
+    wall24: 105,
+    finish: 'Unfinished Premium Maple',
+    extraBaseWidths: [48],
+    extraWallWidths: [48],
+  },
+  {
+    id: 'cardell-concepts-menards',
+    name: 'Cardell Concepts (Menards)',
+    tier: 'stock',
+    base24: 219,
+    wall24: 142,
+    finish: 'Knowlton Peppercorn',
+  },
   // Semi-custom
-  { id: 'schuler-menards', name: 'Schuler (Menards)', tier: 'semi-custom', base24: 239, wall24: 159, finish: 'Maple Shaker' },
+  { id: 'schuler-menards', name: 'Schuler (Menards)', tier: 'semi-custom', base24: 289, wall24: 189, finish: 'Maple Shaker' },
   { id: 'kraftmaid', name: 'KraftMaid', tier: 'semi-custom', base24: 319, wall24: 209, finish: 'Cherry Raised Panel' },
   { id: 'diamond', name: 'Diamond', tier: 'semi-custom', base24: 289, wall24: 189, finish: 'Espresso Shaker' },
   { id: 'thomasville', name: 'Thomasville', tier: 'semi-custom', base24: 349, wall24: 229, finish: 'Maple Cognac' },
@@ -47,12 +133,79 @@ const CABINET_BRANDS = [
   { id: 'aristokraft', name: 'Aristokraft', tier: 'semi-custom', base24: 259, wall24: 169, finish: 'Slate' },
   { id: 'decora', name: 'Decora', tier: 'semi-custom', base24: 379, wall24: 249, finish: 'Painted Linen' },
   { id: 'medallion', name: 'Medallion', tier: 'semi-custom', base24: 339, wall24: 225, finish: 'Alabaster' },
+  {
+    id: 'medallion-menards',
+    name: 'Medallion at Menards',
+    tier: 'semi-custom',
+    base24: 398,
+    wall24: 268,
+    finish: 'Silverline Full Overlay',
+    extraBaseWidths: [48],
+    extraWallWidths: [48],
+  },
+  {
+    id: 'medallion-deluxe-menards',
+    name: 'Medallion Deluxe (Menards)',
+    tier: 'semi-custom',
+    base24: 448,
+    wall24: 298,
+    finish: 'Factory Modifications',
+    extraBaseWidths: [48],
+    extraWallWidths: [48],
+  },
+  { id: 'caldwell', name: 'Caldwell (Medallion at Menards)', tier: 'semi-custom', base24: 418, wall24: 278, finish: 'Espresso on Cherry', extraWallWidths: [48] },
+  {
+    id: 'springmont-menards',
+    name: 'Springmont (Medallion at Menards)',
+    tier: 'semi-custom',
+    base24: 342,
+    wall24: 228,
+    finish: 'Raised Panel Maple',
+    extraWallWidths: [48],
+  },
   { id: 'ultra-style', name: 'Ultrastyle', tier: 'semi-custom', base24: 299, wall24: 195, finish: 'Stone Gray' },
   { id: 'waypoint', name: 'Waypoint Living Spaces', tier: 'semi-custom', base24: 309, wall24: 199, finish: 'Mocha Glaze' },
   { id: 'mid-continent', name: 'Mid Continent', tier: 'semi-custom', base24: 289, wall24: 185, finish: 'Hickory Natural' },
   { id: 'kemper', name: 'Kemper', tier: 'semi-custom', base24: 319, wall24: 205, finish: 'Cinnamon' },
   { id: 'showplace', name: 'Showplace', tier: 'semi-custom', base24: 349, wall24: 228, finish: 'Evergreen' },
   { id: 'cardell', name: 'Cardell', tier: 'semi-custom', base24: 299, wall24: 192, finish: 'Sandstone' },
+  {
+    id: 'cardell-menards',
+    name: 'Cardell Designer (Menards)',
+    tier: 'semi-custom',
+    base24: 338,
+    wall24: 218,
+    finish: 'Lakeridge Dove White',
+    extraBaseWidths: [48],
+    extraWallWidths: [48],
+  },
+  {
+    id: 'cardell-cornerstone-menards',
+    name: 'Cardell Cornerstone (Menards)',
+    tier: 'semi-custom',
+    base24: 268,
+    wall24: 178,
+    finish: 'Forestville Natural Oak',
+    extraWallWidths: [48],
+  },
+  {
+    id: 'lakeridge-cardell',
+    name: 'Cardell Lakeridge (Menards)',
+    tier: 'semi-custom',
+    base24: 308,
+    wall24: 202,
+    finish: 'Molasses Shaker',
+    extraWallWidths: [48],
+  },
+  {
+    id: 'rockney-cardell',
+    name: 'Cardell Rockney (Menards)',
+    tier: 'semi-custom',
+    base24: 318,
+    wall24: 208,
+    finish: 'Dove White',
+    extraWallWidths: [48],
+  },
   { id: 'shenandoah', name: 'Shenandoah', tier: 'semi-custom', base24: 325, wall24: 212, finish: 'Espresso' },
   { id: 'pace', name: 'Pace', tier: 'semi-custom', base24: 265, wall24: 172, finish: 'Maple Spice' },
   { id: 'mid-america', name: 'Mid America Cabinetry', tier: 'semi-custom', base24: 255, wall24: 168, finish: 'Briarwood' },
@@ -126,6 +279,10 @@ const COUNTERTOP_BRANDS = [
   { id: 'concrete', name: 'Concrete (Local Fabricator)', material: 'Concrete', pricePerSqFt: 70 },
   { id: 'stainless', name: 'Stainless Steel', material: 'Stainless', pricePerSqFt: 90 },
   { id: 'recycled-glass', name: 'IceStone Recycled Glass', material: 'Recycled Glass', pricePerSqFt: 75 },
+  { id: 'menards-laminate', name: 'Menards Laminate', material: 'Laminate', pricePerSqFt: 24 },
+  { id: 'menards-butcher-block', name: 'Menards Butcher Block', material: 'Butcher Block', pricePerSqFt: 42, depthIn: 25.5 },
+  { id: 'menards-quartz', name: 'Menards Quartz', material: 'Quartz', pricePerSqFt: 52 },
+  { id: 'menards-granite', name: 'Menards Granite', material: 'Granite', pricePerSqFt: 58 },
 ];
 
 /** @type {{ id: string, name: string, base36: number, finish: string }[]} */
@@ -168,12 +325,58 @@ const VANITY_BRANDS = [
   { id: 'luxe', name: 'Luxe by Golden', base36: 649, finish: 'Gray Oak' },
   { id: 'duravit', name: 'Duravit', base36: 949, finish: 'Modern White' },
   { id: 'villeroy-boch', name: 'Villeroy & Boch', base36: 899, finish: 'Subway White' },
+  { id: 'cardell-bath-menards', name: 'Cardell Bath (Menards)', base36: 449, finish: 'Lakeridge White' },
+  { id: 'medallion-bath-menards', name: 'Medallion Bath (Menards)', base36: 529, finish: 'Silverline White' },
+  { id: 'tuscany-palermo-menards', name: 'Tuscany Palermo (Menards)', base36: 399, finish: 'Caldwell Green' },
+  { id: 'klearvue-bath-menards', name: 'Klearvue Bath (Menards)', base36: 329, finish: 'Visby White' },
 ];
 
+/** Material-only toilets — specs from manufacturer rough-in; prices from HD/Menards-class retail May 2026. */
+const TOILET_PRODUCTS = [
+  { id: 'glacier-bay-round', brand: 'Glacier Bay', name: 'Round Front 2-Piece (Seat Incl.)', subcategory: 'two-piece', widthIn: 16.5, depthIn: 26.5, heightIn: 28.5, listPrice: 99 },
+  { id: 'project-source-elongated', brand: 'Project Source', name: 'Elongated 2-Piece', subcategory: 'two-piece', widthIn: 17, depthIn: 28, heightIn: 29.5, listPrice: 109 },
+  { id: 'american-standard-cadet', brand: 'American Standard', name: 'Cadet 3 FloWise Elongated', subcategory: 'two-piece', widthIn: 17.5, depthIn: 28.5, heightIn: 30.5, listPrice: 219 },
+  { id: 'american-standard-champion', brand: 'American Standard', name: 'Champion 4 Max Elongated', subcategory: 'two-piece', widthIn: 17.5, depthIn: 29, heightIn: 31, listPrice: 279 },
+  { id: 'kohler-cimarron', brand: 'Kohler', name: 'Cimarron Elongated (Seat Incl.)', subcategory: 'two-piece', widthIn: 18, depthIn: 28.5, heightIn: 30.5, listPrice: 229 },
+  { id: 'kohler-highline', brand: 'Kohler', name: 'Highline Arc Elongated', subcategory: 'two-piece', widthIn: 18, depthIn: 29, heightIn: 31, listPrice: 289 },
+  { id: 'delta-foundations', brand: 'Delta', name: 'Foundations 2-Piece Elongated', subcategory: 'two-piece', widthIn: 17, depthIn: 27.5, heightIn: 29.5, listPrice: 149 },
+  { id: 'toto-drake', brand: 'TOTO', name: 'Drake Eco UltraMax Elongated', subcategory: 'two-piece', widthIn: 18, depthIn: 28.5, heightIn: 30.5, listPrice: 399 },
+  { id: 'swiss-madison-stealth', brand: 'Swiss Madison', name: 'Stealth Dual Flush One-Piece', subcategory: 'one-piece', widthIn: 17, depthIn: 27, heightIn: 29.5, listPrice: 269 },
+  { id: 'woodbridge-dual', brand: 'Woodbridge', name: 'Dual Flush One-Piece Elongated', subcategory: 'one-piece', widthIn: 18, depthIn: 28, heightIn: 30.5, listPrice: 329 },
+  { id: 'menards-comfort-elongated', brand: 'Menards Essentials', name: 'Comfort Height Elongated 2-Piece', subcategory: 'two-piece', widthIn: 18, depthIn: 29, heightIn: 30.5, listPrice: 139 },
+];
+
+/** Tubs / showers — Menards PDP dimensions where noted; material-only pricing. */
+const SHOWER_PRODUCTS = [
+  { id: 'alcove-tub-60', brand: 'Sterling by Kohler', name: 'Ensemble Bathtub 60×30×16', subcategory: 'tub', widthIn: 60, depthIn: 30, heightIn: 16, listPrice: 289 },
+  { id: 'alcove-tub-72', brand: 'Sterling by Kohler', name: 'Ensemble Bathtub 72×32×16', subcategory: 'tub', widthIn: 72, depthIn: 32, heightIn: 16, listPrice: 429 },
+  {
+    id: 'tub-shower-combo-60',
+    brand: 'Sterling by Kohler',
+    name: 'Ensemble Medley 60×32×75 (4-Piece)',
+    subcategory: 'combo',
+    widthIn: 60,
+    depthIn: 32,
+    heightIn: 75,
+    listPrice: 967,
+  },
+  { id: 'fiberglass-shower-36', brand: 'Sterling by Kohler', name: 'Ensemble Curve Shower 36×34×75', subcategory: 'combo', widthIn: 36, depthIn: 34, heightIn: 75, listPrice: 749 },
+  { id: 'freestanding-tub-67', brand: 'Wyndham Collection', name: 'Freestanding Tub 67×32×24', subcategory: 'tub', widthIn: 67, depthIn: 32, heightIn: 24, listPrice: 1249 },
+  { id: 'corner-tub-60', brand: 'Aquatic', name: 'Corner Tub 60×60×20', subcategory: 'tub', widthIn: 60, depthIn: 60, heightIn: 20, listPrice: 949 },
+  { id: 'walk-in-tile-36', brand: 'Tile Materials (Est.)', name: 'Walk-In Tile Shower 36×36 Materials', subcategory: 'walk-in', widthIn: 36, depthIn: 36, heightIn: 84, listPrice: 1950 },
+  { id: 'walk-in-tile-48', brand: 'Tile Materials (Est.)', name: 'Walk-In Tile Shower 48×36 Materials', subcategory: 'walk-in', widthIn: 48, depthIn: 36, heightIn: 84, listPrice: 2350 },
+  { id: 'walk-in-tile-60', brand: 'Tile Materials (Est.)', name: 'Walk-In Tile Shower 60×36 Materials', subcategory: 'walk-in', widthIn: 60, depthIn: 36, heightIn: 84, listPrice: 2750 },
+  { id: 'walk-in-curbless-60', brand: 'Tile Materials (Est.)', name: 'Curbless Walk-In 60×42 Materials', subcategory: 'walk-in', widthIn: 60, depthIn: 42, heightIn: 84, listPrice: 3350 },
+  { id: 'shower-base-36', brand: 'Tile Redi', name: 'Redi Base Shower Pan 36×36', subcategory: 'base', widthIn: 36, depthIn: 36, heightIn: 6, listPrice: 459 },
+  { id: 'shower-base-48', brand: 'Tile Redi', name: 'Redi Base Shower Pan 48×34', subcategory: 'base', widthIn: 48, depthIn: 34, heightIn: 6, listPrice: 529 },
+  { id: 'glass-enclosure-60', brand: 'DreamLine', name: 'Quattro 60" Sliding Door', subcategory: 'enclosure', widthIn: 60, depthIn: 34, heightIn: 72, listPrice: 899 },
+  { id: 'menards-tub-60', brand: 'Swan', name: 'Veritek Bathtub 60×30×16', subcategory: 'tub', widthIn: 60, depthIn: 30, heightIn: 16, listPrice: 249 },
+];
+
+/** Scale from a calibrated 24" reference; narrow cabinets use ~70% floor vs pure linear. */
 function scalePrice(base24, widthIn) {
-  const lf = widthIn / 12;
-  const effectiveLf = Math.max(lf, 1.5);
-  const scale = effectiveLf / 2;
+  const ratio = widthIn / 24;
+  const scale = widthIn >= 24 ? ratio : 0.68 + 0.32 * ratio;
   const wideDiscount = widthIn >= 36 ? 0.9 : widthIn >= 30 ? 0.95 : 1;
   return Math.round(base24 * scale * wideDiscount);
 }
@@ -196,7 +399,21 @@ function pushItem(items, item) {
 const items = [];
 
 for (const brand of CABINET_BRANDS) {
-  for (const w of BASE_WIDTHS) {
+  const baseDepth = brand.baseDepthIn ?? 24;
+  const wallDepth = brand.wallDepthIn ?? 12;
+  const baseHeight = brand.baseHeightIn ?? 34.5;
+  const wallHeight = brand.wallHeightIn ?? 30;
+  const cornerDepth = Math.max(baseDepth, 24);
+  const baseWidths = [...BASE_WIDTHS, ...(brand.extraBaseWidths ?? [])];
+  const wallWidths = [...WALL_WIDTHS, ...(brand.extraWallWidths ?? [])];
+  const isMenardsCalibrated =
+    brand.id.includes('menards') ||
+    brand.id.startsWith('klearvue') ||
+    brand.id === 'caldwell' ||
+    brand.id === 'lakeridge-cardell' ||
+    brand.id === 'rockney-cardell';
+
+  for (const w of baseWidths) {
     pushItem(items, {
       itemId: `base-${brand.id}-${w}`,
       category: 'cabinet',
@@ -206,10 +423,11 @@ for (const brand of CABINET_BRANDS) {
       brandTier: brand.tier,
       name: `${brand.name} Base ${w}"`,
       widthIn: w,
-      depthIn: 24,
-      heightIn: 34.5,
+      depthIn: baseDepth,
+      heightIn: baseHeight,
       listPrice: scalePrice(brand.base24, w),
       material: brand.finish,
+      ...(isMenardsCalibrated ? { priceSource: PRICE_SOURCE, priceUpdatedAt: PRICE_CALIBRATED_AT } : {}),
     });
   }
   pushItem(items, {
@@ -221,10 +439,11 @@ for (const brand of CABINET_BRANDS) {
     brandTier: brand.tier,
     name: `${brand.name} Base Corner 36"`,
     widthIn: 36,
-    depthIn: 36,
-    heightIn: 34.5,
+    depthIn: cornerDepth,
+    heightIn: baseHeight,
     listPrice: Math.round(brand.base24 * 1.7),
     material: brand.finish,
+    ...(isMenardsCalibrated ? { priceSource: PRICE_SOURCE, priceUpdatedAt: PRICE_CALIBRATED_AT } : {}),
   });
   pushItem(items, {
     itemId: `base-${brand.id}-sink-36`,
@@ -235,10 +454,11 @@ for (const brand of CABINET_BRANDS) {
     brandTier: brand.tier,
     name: `${brand.name} Sink Base 36"`,
     widthIn: 36,
-    depthIn: 24,
-    heightIn: 34.5,
+    depthIn: baseDepth,
+    heightIn: baseHeight,
     listPrice: Math.round(brand.base24 * 1.45),
     material: brand.finish,
+    ...(isMenardsCalibrated ? { priceSource: PRICE_SOURCE, priceUpdatedAt: PRICE_CALIBRATED_AT } : {}),
   });
   pushItem(items, {
     itemId: `base-${brand.id}-drawer-30`,
@@ -249,10 +469,11 @@ for (const brand of CABINET_BRANDS) {
     brandTier: brand.tier,
     name: `${brand.name} 3-Drawer Base 30"`,
     widthIn: 30,
-    depthIn: 24,
-    heightIn: 34.5,
+    depthIn: baseDepth,
+    heightIn: baseHeight,
     listPrice: Math.round(scalePrice(brand.base24, 30) * 1.25),
     material: brand.finish,
+    ...(isMenardsCalibrated ? { priceSource: PRICE_SOURCE, priceUpdatedAt: PRICE_CALIBRATED_AT } : {}),
   });
   pushItem(items, {
     itemId: `base-${brand.id}-pantry-18`,
@@ -263,12 +484,13 @@ for (const brand of CABINET_BRANDS) {
     brandTier: brand.tier,
     name: `${brand.name} Pantry 18"`,
     widthIn: 18,
-    depthIn: 24,
+    depthIn: baseDepth,
     heightIn: 84,
     listPrice: Math.round(brand.base24 * 3.2),
     material: brand.finish,
+    ...(isMenardsCalibrated ? { priceSource: PRICE_SOURCE, priceUpdatedAt: PRICE_CALIBRATED_AT } : {}),
   });
-  for (const w of WALL_WIDTHS) {
+  for (const w of wallWidths) {
     pushItem(items, {
       itemId: `wall-${brand.id}-${w}`,
       category: 'cabinet',
@@ -278,13 +500,15 @@ for (const brand of CABINET_BRANDS) {
       brandTier: brand.tier,
       name: `${brand.name} Wall ${w}"`,
       widthIn: w,
-      depthIn: 12,
-      heightIn: 30,
+      depthIn: wallDepth,
+      heightIn: wallHeight,
       listPrice: scalePrice(brand.wall24, w),
       material: brand.finish,
+      ...(isMenardsCalibrated ? { priceSource: PRICE_SOURCE, priceUpdatedAt: PRICE_CALIBRATED_AT } : {}),
     });
   }
   for (const w of [30, 36]) {
+    if (!wallWidths.includes(w)) continue;
     pushItem(items, {
       itemId: `wall-${brand.id}-${w}-36h`,
       category: 'cabinet',
@@ -294,10 +518,11 @@ for (const brand of CABINET_BRANDS) {
       brandTier: brand.tier,
       name: `${brand.name} Wall ${w}" (36"H)`,
       widthIn: w,
-      depthIn: 12,
+      depthIn: wallDepth,
       heightIn: 36,
       listPrice: Math.round(scalePrice(brand.wall24, w) * 1.15),
       material: brand.finish,
+      ...(isMenardsCalibrated ? { priceSource: PRICE_SOURCE, priceUpdatedAt: PRICE_CALIBRATED_AT } : {}),
     });
   }
   pushItem(items, {
@@ -309,7 +534,7 @@ for (const brand of CABINET_BRANDS) {
     brandTier: brand.tier,
     name: `${brand.name} Microwave Wall 30"`,
     widthIn: 30,
-    depthIn: 15,
+    depthIn: Math.max(wallDepth, 15),
     heightIn: 15,
     listPrice: Math.round(scalePrice(brand.wall24, 30) * 0.85),
     material: brand.finish,
@@ -354,15 +579,59 @@ for (const brand of VANITY_BRANDS) {
   }
 }
 
+for (const t of TOILET_PRODUCTS) {
+  pushItem(items, {
+    itemId: `toilet-${t.id}`,
+    category: 'toilet',
+    subcategory: t.subcategory,
+    brand: t.brand,
+    brandId: t.id,
+    name: `${t.brand} ${t.name}`,
+    widthIn: t.widthIn,
+    depthIn: t.depthIn,
+    heightIn: t.heightIn,
+    listPrice: t.listPrice,
+    material: t.subcategory === 'one-piece' ? 'Vitreous China' : 'Porcelain',
+    priceSource: PRICE_SOURCE,
+    priceUpdatedAt: PRICE_CALIBRATED_AT,
+  });
+}
+
+for (const s of SHOWER_PRODUCTS) {
+  pushItem(items, {
+    itemId: `shower-${s.id}`,
+    category: 'shower',
+    subcategory: s.subcategory,
+    brand: s.brand,
+    brandId: s.id,
+    name: s.name,
+    widthIn: s.widthIn,
+    depthIn: s.depthIn,
+    heightIn: s.heightIn,
+    listPrice: s.listPrice,
+    material:
+      s.subcategory === 'walk-in'
+        ? 'Tile + pan + trim (materials only)'
+        : s.subcategory === 'enclosure'
+          ? 'Tempered glass'
+          : 'Vikrell / acrylic',
+    priceSource: PRICE_SOURCE,
+    priceUpdatedAt: PRICE_CALIBRATED_AT,
+  });
+}
+
 const catalog = {
   version: '2.0.0',
   generatedAt: new Date().toISOString(),
   priceDisclaimer:
-    'Approximate 2024–2026 US list/material prices for planning estimates only. Installed, regional, and promotional pricing varies. Not affiliated with listed manufacturers. Future distribution: AWS S3.',
+    'Material-only list prices. Menards lines + bath fixtures calibrated 2026-05-19 from retailer/manufacturer data; other brands scaled from reference SKUs. Store promos and install not included. Future: API priceSource overrides via S3.',
+  priceCalibratedAt: PRICE_CALIBRATED_AT,
   stats: {
     cabinetBrands: CABINET_BRANDS.length,
     countertopBrands: COUNTERTOP_BRANDS.length,
     vanityBrands: VANITY_BRANDS.length,
+    toiletSkus: TOILET_PRODUCTS.length,
+    showerSkus: SHOWER_PRODUCTS.length,
     totalSkus: items.length,
   },
   brands: {
@@ -384,6 +653,14 @@ const catalog = {
       name: b.name,
       referencePrice36: b.base36,
     })),
+    toilets: TOILET_PRODUCTS.map((t) => ({
+      id: t.id,
+      name: t.brand,
+    })),
+    showers: SHOWER_PRODUCTS.map((s) => ({
+      id: s.id,
+      name: s.brand,
+    })),
   },
   items,
 };
@@ -391,5 +668,5 @@ const catalog = {
 mkdirSync(dirname(OUT), { recursive: true });
 writeFileSync(OUT, JSON.stringify(catalog, null, 2));
 console.log(
-  `Wrote ${items.length} SKUs (${CABINET_BRANDS.length} cabinet + ${COUNTERTOP_BRANDS.length} counter + ${VANITY_BRANDS.length} vanity brands)`,
+  `Wrote ${items.length} SKUs (${CABINET_BRANDS.length} cabinet + ${COUNTERTOP_BRANDS.length} counter + ${VANITY_BRANDS.length} vanity + ${TOILET_PRODUCTS.length} toilet + ${SHOWER_PRODUCTS.length} shower)`,
 );

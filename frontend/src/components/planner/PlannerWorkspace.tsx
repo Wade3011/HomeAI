@@ -1,27 +1,37 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import clsx from 'clsx';
 import { useEffect, useMemo, useState } from 'react';
-import { fetchCatalog, fetchRoom, savePlacements, updateRoom } from '@/lib/api';
+import { fetchCatalog, fetchProjectRooms, fetchRoom, savePlacements, updateRoom } from '@/lib/api';
 import { computePlacementEstimate } from '@/lib/estimate';
 import { isWallCabinet } from '@/config/catalogCategories';
+import { roomTypePreset, normalizeRoomType } from '@/config/roomTypes';
 import {
   inferWallFromPlacement,
   snapWallCabinetFromClick,
   WALL_BASE_ROTATION,
 } from '@/lib/placementSnap';
-import { orientedDimensions } from '@/components/planner/placementCollision';
 import {
+  orientedDimensions,
+  placementOriginAfterRotation,
+  resolvePlacementPosition,
+} from '@/components/planner/placementCollision';
+import {
+  CABINET_GRID_FT,
+  clampPlacementOrigin,
   nextRotationSteps,
   rotationDegreesFromSteps,
   rotationStepsFromY,
   rotationYFromSteps,
+  snapToGrid,
 } from '@/components/planner/plannerUtils';
 import {
   canPlaceItemAt,
   isCountertopItem,
   resolvePlacementY,
 } from '@/lib/placementHeight';
+import { resolvePlacementItem } from '@/lib/placementItem';
 import { PlacementInfoOverlay } from '@/components/planner/PlacementInfoOverlay';
 import {
   buildFootprints,
@@ -30,13 +40,21 @@ import {
 } from '@/components/planner/placementCollision';
 import { CollapsiblePanel } from '@/components/planner/CollapsiblePanel';
 import { EstimatePanel } from '@/components/planner/EstimatePanel';
+import { CustomItemsPanel } from '@/components/planner/CustomItemsPanel';
+import { RoomSwitcher } from '@/components/planner/RoomSwitcher';
 import { PlannerProvider, usePlanner } from '@/contexts/PlannerContext';
 import { CatalogPanel } from '@/components/planner/CatalogPanel';
 import { PlannerScene } from '@/components/planner/PlannerScene';
 import { RoomSettingsPanel } from '@/components/planner/RoomSettingsPanel';
 import type { CatalogItem, Room } from '@/types';
 
-function PlannerInner({ initialRoom }: { initialRoom: Room }) {
+function PlannerInner({
+  projectId,
+  initialRoom,
+}: {
+  projectId: string;
+  initialRoom: Room;
+}) {
   const queryClient = useQueryClient();
   const [room, setRoom] = useState(initialRoom);
 
@@ -44,20 +62,32 @@ function PlannerInner({ initialRoom }: { initialRoom: Room }) {
     setRoom(initialRoom);
   }, [initialRoom]);
 
+  const roomPreset = roomTypePreset(room.type);
+
   const {
     placements,
     selectedPlacementId,
     catalogDragItem,
     setCatalogDragItem,
-    addPlacement,
+    customDragItem,
+    setCustomDragItem,
+    addCatalogPlacement,
+    addCustomPlacement,
     updatePlacement,
+    updateCustomItem,
     removePlacement,
     selectPlacement,
+    cancelPlaceMode,
   } = usePlanner();
 
   const { data: catalog = [] } = useQuery({
     queryKey: ['catalog'],
     queryFn: () => fetchCatalog(),
+  });
+
+  const { data: projectRooms = [] } = useQuery({
+    queryKey: ['rooms', projectId],
+    queryFn: () => fetchProjectRooms(projectId),
   });
 
   const saveMutation = useMutation({
@@ -89,23 +119,29 @@ function PlannerInner({ initialRoom }: { initialRoom: Room }) {
 
   useEffect(() => {
     setPlaceRotationSteps(0);
-  }, [catalogDragItem?.itemId]);
+  }, [catalogDragItem?.itemId, customDragItem?.templateId]);
+
+  useEffect(() => {
+    cancelPlaceMode();
+    selectPlacement(null);
+  }, [room.roomId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       selectPlacement(null);
-      setCatalogDragItem(null);
+      cancelPlaceMode();
       setPlaceRotationSteps(0);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectPlacement, setCatalogDragItem]);
+  }, [selectPlacement, cancelPlaceMode]);
 
   const activeCatalogId = catalogDragItem?.itemId ?? null;
+  const activeCustomId = customDragItem?.templateId ?? null;
   const selectedPlacement = placements.find((p) => p.placementId === selectedPlacementId);
-  const selectedItem = selectedPlacement
-    ? catalogById[selectedPlacement.catalogItemId]
+  const selectedResolved = selectedPlacement
+    ? resolvePlacementItem(selectedPlacement, catalogById)
     : null;
 
   const estimate = useMemo(
@@ -113,18 +149,24 @@ function PlannerInner({ initialRoom }: { initialRoom: Room }) {
     [placements, catalogById],
   );
 
+  const placingActive = !!catalogDragItem || !!customDragItem;
+
   const rotatePlacementBy = (placementId: string, deltaSteps: number) => {
     const p = placements.find((pl) => pl.placementId === placementId);
-    const item = p ? catalogById[p.catalogItemId] : undefined;
-    if (!p || !item) return;
-    const { widthFt, depthFt } = catalogDimensionsFt(item);
+    if (!p) return;
+
+    const resolved = resolvePlacementItem(p, catalogById);
+    if (!resolved) return;
+
+    const { widthFt, depthFt } = resolved;
+    const item = resolved.catalogItem;
     let positionX = p.positionX;
     let positionZ = p.positionZ;
     let newRotation = rotationYFromSteps(
       nextRotationSteps(rotationStepsFromY(p.rotationY), deltaSteps),
     );
 
-    if (isWallCabinet(item)) {
+    if (item && isWallCabinet(item)) {
       const wall = inferWallFromPlacement(
         p.positionX,
         p.positionZ,
@@ -150,6 +192,26 @@ function PlannerInner({ initialRoom }: { initialRoom: Room }) {
       positionX = snapped.x;
       positionZ = snapped.z;
       newRotation = snapped.rotationY ?? rotationYFromSteps(newRel);
+    } else {
+      const origin = placementOriginAfterRotation(
+        p.positionX,
+        p.positionZ,
+        widthFt,
+        depthFt,
+        p.rotationY,
+        newRotation,
+      );
+      const o = orientedDimensions(widthFt, depthFt, newRotation);
+      const snapped = clampPlacementOrigin(
+        snapToGrid(origin.positionX, CABINET_GRID_FT),
+        snapToGrid(origin.positionZ, CABINET_GRID_FT),
+        o.widthFt,
+        o.depthFt,
+        room.widthFt,
+        room.depthFt,
+      );
+      positionX = snapped.x;
+      positionZ = snapped.z;
     }
 
     const fps = buildFootprints(placements, catalogById);
@@ -168,16 +230,17 @@ function PlannerInner({ initialRoom }: { initialRoom: Room }) {
     ) {
       return;
     }
+
     const patch: Partial<import('@/types').Placement> = {
       rotationY: newRotation,
       positionX,
       positionZ,
     };
-    if (isCountertopItem(item)) {
+    if (item && isCountertopItem(item)) {
       const y = resolvePlacementY(
         item,
-        p.positionX,
-        p.positionZ,
+        positionX,
+        positionZ,
         newRotation,
         placements.filter((pl) => pl.placementId !== placementId),
         catalogById,
@@ -193,38 +256,92 @@ function PlannerInner({ initialRoom }: { initialRoom: Room }) {
     rotatePlacementBy(selectedPlacementId, 1);
   };
 
+  const tryPlaceCustom = (x: number, z: number, rotationY: number) => {
+    if (!customDragItem) return false;
+    const widthFt = customDragItem.widthIn / 12;
+    const depthFt = customDragItem.depthIn / 12;
+    const fps = buildFootprints(placements, catalogById);
+    const resolved = resolvePlacementPosition({
+      x,
+      z,
+      widthFt,
+      depthFt,
+      rotationY,
+      roomWidthFt: room.widthFt,
+      roomDepthFt: room.depthFt,
+      footprints: fps,
+      catalogById,
+      nudgeFt: 2,
+    });
+    if (!resolved) return false;
+    addCustomPlacement(
+      {
+        label: customDragItem.label,
+        shape: customDragItem.shape,
+        widthIn: customDragItem.widthIn,
+        depthIn: customDragItem.depthIn,
+        heightIn: customDragItem.heightIn,
+      },
+      { x: resolved.x, z: resolved.z, rotationY },
+    );
+    cancelPlaceMode();
+    setPlaceRotationSteps(0);
+    return true;
+  };
+
   return (
-    <div className="flex h-[calc(100vh-4rem)] flex-col">
-      <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-4 py-3">
-        <div>
-          <h1 className="text-lg font-semibold text-zinc-900">{room.name}</h1>
-          <p className="text-sm text-zinc-500">
-            {room.widthFt}&apos; × {room.depthFt}&apos; × {room.heightFt}&apos; · {placements.length}{' '}
-            items
+    <div className="flex h-[calc(100vh-4rem)] flex-col bg-[var(--background)]">
+      <header className="panel-header flex flex-wrap items-center justify-between gap-3 border-b border-[var(--sage-700)] px-4 py-3 shadow-sm">
+        <div className="min-w-0">
+          <h1 className="text-lg font-bold tracking-tight">{room.name}</h1>
+          <p className="text-sm text-[var(--sage-100)]">
+            {roomPreset.label} · {room.widthFt}&apos; × {room.depthFt}&apos; × {room.heightFt}&apos; ·{' '}
+            {placements.length} items
           </p>
+          <div className="mt-2">
+            <RoomSwitcher
+              projectId={projectId}
+              rooms={projectRooms}
+              currentRoomId={room.roomId}
+            />
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-800">
-            Est. ${estimate.total.toLocaleString()}
-            {estimate.itemCount > 0 && (
-              <span className="ml-1 font-normal text-emerald-700">
-                ({estimate.itemCount} items)
-              </span>
-            )}
-          </span>
-          {selectedPlacementId && (
+          {roomPreset.hasCatalogPricing && (
+            <span className="rounded-full bg-white px-3 py-1.5 text-sm font-bold text-stone-800 shadow-sm">
+              Est. ${estimate.total.toLocaleString()}
+              {estimate.itemCount > 0 && (
+                <span className="ml-1 font-medium text-stone-500">
+                  ({estimate.itemCount} priced)
+                </span>
+              )}
+            </span>
+          )}
+          {!roomPreset.hasCatalogPricing && (
+            <span className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-stone-600 shadow-sm">
+              Layout only — no catalog pricing
+            </span>
+          )}
+          {selectedPlacementId && !placingActive && (
             <>
               <button
                 type="button"
+                onClick={() => selectPlacement(null)}
+                className="rounded-lg border border-white/30 bg-white/15 px-3 py-2 text-sm font-medium backdrop-blur transition hover:bg-white/25"
+              >
+                Deselect
+              </button>
+              <button
+                type="button"
                 onClick={rotateSelected}
-                className="rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50"
+                className="rounded-lg border border-white/30 bg-white/15 px-3 py-2 text-sm font-medium backdrop-blur transition hover:bg-white/25"
               >
                 Rotate 90°
               </button>
               <button
                 type="button"
                 onClick={() => removePlacement(selectedPlacementId)}
-                className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700 hover:bg-red-50"
+                className="rounded-lg border border-red-200/50 bg-red-500/90 px-3 py-2 text-sm font-medium text-white transition hover:bg-red-400"
               >
                 Delete
               </button>
@@ -234,7 +351,7 @@ function PlannerInner({ initialRoom }: { initialRoom: Room }) {
             type="button"
             onClick={() => saveMutation.mutate()}
             disabled={saveMutation.isPending}
-            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+            className="rounded-lg bg-white px-4 py-2 text-sm font-bold text-stone-800 shadow-sm transition hover:bg-stone-100 disabled:opacity-50"
           >
             {saveMutation.isPending ? 'Saving…' : 'Save layout'}
           </button>
@@ -250,58 +367,108 @@ function PlannerInner({ initialRoom }: { initialRoom: Room }) {
             onApply={(dims) => roomMutation.mutate(dims)}
           />
         </CollapsiblePanel>
-        <CollapsiblePanel title="Catalog" side="left" defaultOpen={false} widthClass="w-64">
-          <CatalogPanel
-            items={catalog}
-            activeItemId={activeCatalogId}
-            onPick={(item) => {
-              if (catalogDragItem?.itemId === item.itemId) {
+        {roomPreset.catalogSections.length > 0 && (
+          <CollapsiblePanel title="Catalog" side="left" defaultOpen={false} widthClass="w-64">
+            <CatalogPanel
+              items={catalog}
+              activeItemId={activeCatalogId}
+              allowedSections={roomPreset.catalogSections}
+              onPick={(item) => {
+                setCustomDragItem(null);
+                if (catalogDragItem?.itemId === item.itemId) {
+                  setCatalogDragItem(null);
+                  setPlaceRotationSteps(0);
+                } else {
+                  setCatalogDragItem(item);
+                }
+              }}
+            />
+          </CollapsiblePanel>
+        )}
+        {roomPreset.allowsCustomItems && (
+          <CollapsiblePanel title="Furniture" side="left" defaultOpen={false} widthClass="w-64">
+            <CustomItemsPanel
+              roomType={normalizeRoomType(room.type)}
+              activeTemplateId={activeCustomId}
+              onPick={(template) => {
                 setCatalogDragItem(null);
-                setPlaceRotationSteps(0);
-              } else {
-                setCatalogDragItem(item);
-              }
-            }}
-          />
-        </CollapsiblePanel>
-        <main className="flex min-w-0 flex-1 flex-col p-4">
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-sm text-zinc-600">
-            <p className="min-w-0 flex-1">
+                if (customDragItem?.templateId === template.templateId) {
+                  cancelPlaceMode();
+                  setPlaceRotationSteps(0);
+                } else {
+                  setCustomDragItem(template);
+                }
+              }}
+            />
+          </CollapsiblePanel>
+        )}
+        <main className="flex min-w-0 flex-1 flex-col p-3 sm:p-4">
+          <div
+            className={clsx(
+              'mb-2 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-sm shadow-sm',
+              placingActive
+                ? 'border-[var(--sage-600)] bg-[var(--sage-50)] text-[var(--sage-800)]'
+                : 'border-stone-200 bg-white text-stone-600',
+            )}
+          >
+            <p className="min-w-0 flex-1 font-medium">
               {catalogDragItem
                 ? isCountertopItem(catalogDragItem)
-                  ? `Click green base cabinets to place countertop: ${catalogDragItem.name} (${rotationDegreesFromSteps(placeRotationSteps)}°)`
+                  ? `Click green bases to place countertop: ${catalogDragItem.name} (${rotationDegreesFromSteps(placeRotationSteps)}°)`
                   : isWallCabinet(catalogDragItem)
-                    ? `Click a blue wall grid to place: ${catalogDragItem.name} (${rotationDegreesFromSteps(placeRotationSteps)}°) · 6" grid`
-                    : `Click the floor to place: ${catalogDragItem.name} (${rotationDegreesFromSteps(placeRotationSteps)}°)`
-                : 'Select a catalog item, then click the floor. Drag empty floor to rotate the view.'}
+                    ? `Click a blue wall grid: ${catalogDragItem.name} (${rotationDegreesFromSteps(placeRotationSteps)}°)`
+                    : `Click the floor to place: ${catalogDragItem.name} (${rotationDegreesFromSteps(placeRotationSteps)}°) · view locked`
+                : customDragItem
+                  ? `Click the floor to place: ${customDragItem.label} (${rotationDegreesFromSteps(placeRotationSteps)}°) · edit size after placing`
+                  : roomPreset.allowsCustomItems && roomPreset.catalogSections.length > 0
+                    ? 'Pick from Catalog or Furniture, then click to place. Drag empty space to orbit.'
+                    : roomPreset.allowsCustomItems
+                      ? 'Pick a furniture block, click the floor to place, then edit size in the selection panel.'
+                      : 'Select a catalog item, then click the floor or wall grid. Drag to orbit when idle.'}
             </p>
-            {catalogDragItem && (
-              <button
-                type="button"
-                onClick={() =>
-                  setPlaceRotationSteps((s) => nextRotationSteps(s, 1))
-                }
-                className="shrink-0 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-              >
-                ↻ Rotate ({rotationDegreesFromSteps(placeRotationSteps)}°)
-              </button>
+            {placingActive && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setPlaceRotationSteps((s) => nextRotationSteps(s, 1))}
+                  className="shrink-0 rounded-lg border border-[var(--sage-600)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--sage-700)] transition hover:bg-[var(--sage-50)]"
+                >
+                  ↻ Rotate ({rotationDegreesFromSteps(placeRotationSteps)}°)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    cancelPlaceMode();
+                    setPlaceRotationSteps(0);
+                  }}
+                  className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+              </>
             )}
           </div>
           <div className="relative min-h-0 flex-1">
             <PlacementInfoOverlay
               room={room}
               placement={selectedPlacement ?? null}
-              item={selectedItem}
+              resolved={selectedResolved}
               onRotateLeft={() =>
                 selectedPlacementId && rotatePlacementBy(selectedPlacementId, -1)
               }
               onRotateRight={() => selectedPlacementId && rotateSelected()}
+              onCustomChange={
+                selectedPlacementId && selectedPlacement?.customItem
+                  ? (patch) => updateCustomItem(selectedPlacementId, patch)
+                  : undefined
+              }
             />
             <PlannerScene
               room={room}
               placements={placements}
               catalogById={catalogById}
               catalogItemForPlace={catalogDragItem}
+              customItemForPlace={customDragItem}
               placeRotationSteps={placeRotationSteps}
               selectedPlacementId={selectedPlacementId}
               onSelectPlacement={selectPlacement}
@@ -328,25 +495,24 @@ function PlannerInner({ initialRoom }: { initialRoom: Room }) {
                   catalogById,
                 );
                 if (positionY === null) return false;
-                addPlacement(catalogDragItem, { x, z, rotationY, positionY });
-                setCatalogDragItem(null);
+                addCatalogPlacement(catalogDragItem, { x, z, rotationY, positionY });
+                cancelPlaceMode();
                 setPlaceRotationSteps(0);
                 return true;
               }}
+              onPlaceCustomAt={(x, z, rotationY) => tryPlaceCustom(x, z, rotationY)}
               onMovePlacement={(id, x, z) => {
                 const p = placements.find((pl) => pl.placementId === id);
-                const item = p ? catalogById[p.catalogItemId] : undefined;
-                if (!p || !item) return;
-                let positionX = x;
-                let positionZ = z;
-
+                if (!p) return;
+                const resolved = resolvePlacementItem(p, catalogById);
+                if (!resolved) return;
                 const patch: Partial<import('@/types').Placement> = {
                   positionX: x,
                   positionZ: z,
                 };
-                if (isCountertopItem(item)) {
+                if (resolved.catalogItem && isCountertopItem(resolved.catalogItem)) {
                   const y = resolvePlacementY(
-                    item,
+                    resolved.catalogItem,
                     x,
                     z,
                     p.rotationY,
@@ -362,21 +528,30 @@ function PlannerInner({ initialRoom }: { initialRoom: Room }) {
                 rotatePlacementBy(id, 1);
                 return true;
               }}
+              onDeselect={() => selectPlacement(null)}
+              onCancelPlaceMode={() => {
+                cancelPlaceMode();
+                setPlaceRotationSteps(0);
+              }}
             />
           </div>
         </main>
-        <CollapsiblePanel title="Estimate" side="right" defaultOpen={false} widthClass="w-52">
-          <EstimatePanel estimate={estimate} />
-        </CollapsiblePanel>
+        {roomPreset.hasCatalogPricing && (
+          <CollapsiblePanel title="Estimate" side="right" defaultOpen={false} widthClass="w-52">
+            <EstimatePanel estimate={estimate} />
+          </CollapsiblePanel>
+        )}
       </div>
     </div>
   );
 }
 
 export function PlannerWorkspace({
+  projectId,
   roomId,
   initialPlacements,
 }: {
+  projectId: string;
   roomId: string;
   initialPlacements: import('@/types').Placement[];
 }) {
@@ -386,12 +561,17 @@ export function PlannerWorkspace({
   });
 
   if (isLoading || !room) {
-    return <p className="p-8 text-zinc-600">Loading planner…</p>;
+    return (
+      <p className="flex items-center justify-center gap-2 p-8 text-stone-600">
+        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-stone-400" />
+        Loading planner…
+      </p>
+    );
   }
 
   return (
     <PlannerProvider roomId={roomId} initialPlacements={initialPlacements}>
-      <PlannerInner initialRoom={room} />
+      <PlannerInner projectId={projectId} initialRoom={room} />
     </PlannerProvider>
   );
 }

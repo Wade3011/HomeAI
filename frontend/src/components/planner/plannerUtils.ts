@@ -4,6 +4,9 @@ export const ROTATION_STEP_COUNT = 4;
 /** 6-inch grid for cabinet placement along walls and counters */
 export const CABINET_GRID_FT = 0.5;
 
+/** 1-inch grid for smooth drag preview & fine cabinet movement. */
+export const FINE_GRID_FT = 1 / 12;
+
 export function snapToGrid(value: number, gridSize = CABINET_GRID_FT): number {
   return Math.round(value / gridSize) * gridSize;
 }

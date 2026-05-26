@@ -1,10 +1,13 @@
 import type { CatalogItem, Placement } from '@/types';
+import { isCatalogPlacement } from '@/lib/placementItem';
 
 export interface EstimateBreakdown {
   baseCabinets: number;
   wallCabinets: number;
   countertops: number;
   vanities: number;
+  toilets: number;
+  showers: number;
   other: number;
 }
 
@@ -17,6 +20,8 @@ export interface PlacementEstimate {
 
 export function catalogGroupLabel(item: CatalogItem): keyof EstimateBreakdown | 'other' {
   if (item.category === 'countertop') return 'countertops';
+  if (item.category === 'toilet') return 'toilets';
+  if (item.category === 'shower') return 'showers';
   if (item.category === 'vanity') return 'vanities';
   if (item.subcategory === 'wall' || item.category === 'wall-cabinet') return 'wallCabinets';
   if (item.subcategory === 'base' || item.category === 'base-cabinet') return 'baseCabinets';
@@ -35,6 +40,8 @@ export function computePlacementEstimate(
     wallCabinets: 0,
     countertops: 0,
     vanities: 0,
+    toilets: 0,
+    showers: 0,
     other: 0,
   };
 
@@ -42,7 +49,8 @@ export function computePlacementEstimate(
   const lineItems: PlacementEstimate['lineItems'] = [];
 
   for (const p of placements) {
-    const item = catalogById[p.catalogItemId];
+    if (!isCatalogPlacement(p)) continue;
+    const item = catalogById[p.catalogItemId!];
     if (!item) continue;
     const price = item.listPrice;
     total += price;

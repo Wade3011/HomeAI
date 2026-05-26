@@ -1,84 +1,62 @@
 'use client';
 
-import { Line, Text } from '@react-three/drei';
-import { useMemo } from 'react';
-import type { CatalogItem, Placement, Room } from '@/types';
-import { catalogDimensionsFt, orientedDimensions } from '@/components/planner/placementCollision';
+import { Html, Line } from '@react-three/drei';
+import { useThree } from '@react-three/fiber';
+import { useEffect, useMemo } from 'react';
+import type { Placement, Room } from '@/types';
+import { orientedDimensions } from '@/components/planner/placementCollision';
 
-function formatFt(value: number) {
+const DIM_LINE = '#5c7a6a';
+
+export function formatFt(value: number) {
   const rounded = Math.round(value * 10) / 10;
   return Number.isInteger(rounded) ? `${rounded}` : rounded.toFixed(1);
 }
 
-function WallDistanceLabel({
-  start,
-  end,
+function DimLabel({
+  position,
   label,
-  y = 0.12,
+  room = false,
 }: {
-  start: [number, number, number];
-  end: [number, number, number];
+  position: [number, number, number];
   label: string;
-  y?: number;
+  room?: boolean;
 }) {
-  const mid: [number, number, number] = [
-    (start[0] + end[0]) / 2,
-    y,
-    (start[2] + end[2]) / 2,
-  ];
   return (
-    <group>
-      <Line points={[start, end]} color="#2563eb" lineWidth={1.5} />
-      <Text
-        position={mid}
-        rotation={[-Math.PI / 2, 0, 0]}
-        fontSize={0.28}
-        color="#1e40af"
-        anchorX="center"
-        anchorY="middle"
-        outlineWidth={0.02}
-        outlineColor="#ffffff"
-      >
+    <Html
+      position={position}
+      center
+      distanceFactor={14}
+      zIndexRange={[80, 0]}
+      style={{ pointerEvents: 'none' }}
+    >
+      <span className={room ? 'dimension-label dimension-label-room' : 'dimension-label'}>
         {label}
-      </Text>
-    </group>
+      </span>
+    </Html>
   );
 }
 
+function mid(
+  a: [number, number, number],
+  b: [number, number, number],
+): [number, number, number] {
+  return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+}
+
+/** Room width / depth labels on the floor. */
 export function RoomFloorDimensions({ room }: { room: Room }) {
   const { widthFt: w, depthFt: d } = room;
-  const y = 0.14;
+  const y = 0.12;
 
   return (
-    <group>
-      <Text
-        position={[w / 2, y, -0.6]}
-        rotation={[-Math.PI / 2, 0, 0]}
-        fontSize={0.38}
-        color="#52525b"
-        anchorX="center"
-        outlineWidth={0.025}
-        outlineColor="#fafafa"
-      >
-        {formatFt(w)} ft
-      </Text>
-      <Text
-        position={[-0.6, y, d / 2]}
-        rotation={[-Math.PI / 2, 0, Math.PI / 2]}
-        fontSize={0.38}
-        color="#52525b"
-        anchorX="center"
-        outlineWidth={0.025}
-        outlineColor="#fafafa"
-      >
-        {formatFt(d)} ft
-      </Text>
+    <group raycast={() => null}>
       <Line
         points={[
           [0, 0.05, 0],
           [w, 0.05, 0],
         ]}
-        color="#a1a1aa"
+        color="#a8a29e"
         lineWidth={1}
         dashed
         dashSize={0.4}
@@ -89,26 +67,30 @@ export function RoomFloorDimensions({ room }: { room: Room }) {
           [0, 0.05, 0],
           [0, 0.05, d],
         ]}
-        color="#a1a1aa"
+        color="#a8a29e"
         lineWidth={1}
         dashed
         dashSize={0.4}
         gapSize={0.25}
       />
+      <DimLabel position={[w / 2, y, -0.45]} label={`${formatFt(w)} ft`} room />
+      <DimLabel position={[-0.45, y, d / 2]} label={`${formatFt(d)} ft`} room />
     </group>
   );
 }
 
+/** Wall distance guides + labels for the selected cabinet. */
 export function SelectedPlacementDimensions({
   room,
   placement,
-  item,
+  widthFt,
+  depthFt,
 }: {
   room: Room;
   placement: Placement;
-  item: CatalogItem;
+  widthFt: number;
+  depthFt: number;
 }) {
-  const { widthFt, depthFt } = catalogDimensionsFt(item);
   const oriented = useMemo(
     () => orientedDimensions(widthFt, depthFt, placement.rotationY),
     [widthFt, depthFt, placement.rotationY],
@@ -118,36 +100,38 @@ export function SelectedPlacementDimensions({
   const z = placement.positionZ;
   const ow = oriented.widthFt;
   const od = oriented.depthFt;
+  const y = Math.max(placement.positionY + 0.15, 0.12);
 
   const left = x;
   const right = room.widthFt - x - ow;
   const back = z;
   const front = room.depthFt - z - od;
 
-  const y = Math.max(placement.positionY + 0.2, 0.15);
+  const leftStart: [number, number, number] = [0, y, z + od / 2];
+  const leftEnd: [number, number, number] = [x, y, z + od / 2];
+  const rightStart: [number, number, number] = [x + ow, y, z + od / 2];
+  const rightEnd: [number, number, number] = [room.widthFt, y, z + od / 2];
+  const backStart: [number, number, number] = [x + ow / 2, y, 0];
+  const backEnd: [number, number, number] = [x + ow / 2, y, z];
+  const frontStart: [number, number, number] = [x + ow / 2, y, z + od];
+  const frontEnd: [number, number, number] = [x + ow / 2, y, room.depthFt];
+
+  const { invalidate } = useThree();
+  useEffect(() => {
+    invalidate();
+  }, [x, z, ow, od, left, right, back, front, invalidate]);
 
   return (
-    <group>
-      <WallDistanceLabel
-        start={[0, y, z + od / 2]}
-        end={[x, y, z + od / 2]}
-        label={`${formatFt(left)} ft`}
-      />
-      <WallDistanceLabel
-        start={[x + ow, y, z + od / 2]}
-        end={[room.widthFt, y, z + od / 2]}
-        label={`${formatFt(right)} ft`}
-      />
-      <WallDistanceLabel
-        start={[x + ow / 2, y, 0]}
-        end={[x + ow / 2, y, z]}
-        label={`${formatFt(back)} ft`}
-      />
-      <WallDistanceLabel
-        start={[x + ow / 2, y, z + od]}
-        end={[x + ow / 2, y, room.depthFt]}
-        label={`${formatFt(front)} ft`}
-      />
+    <group raycast={() => null}>
+      <Line points={[leftStart, leftEnd]} color={DIM_LINE} lineWidth={2} />
+      <Line points={[rightStart, rightEnd]} color={DIM_LINE} lineWidth={2} />
+      <Line points={[backStart, backEnd]} color={DIM_LINE} lineWidth={2} />
+      <Line points={[frontStart, frontEnd]} color={DIM_LINE} lineWidth={2} />
+
+      <DimLabel position={mid(leftStart, leftEnd)} label={`${formatFt(left)} ft`} />
+      <DimLabel position={mid(rightStart, rightEnd)} label={`${formatFt(right)} ft`} />
+      <DimLabel position={mid(backStart, backEnd)} label={`${formatFt(back)} ft`} />
+      <DimLabel position={mid(frontStart, frontEnd)} label={`${formatFt(front)} ft`} />
     </group>
   );
 }

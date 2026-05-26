@@ -25,7 +25,7 @@ export function CollapsiblePanel({
     return (
       <aside
         className={clsx(
-          'flex w-9 shrink-0 flex-col items-center border-zinc-200 bg-zinc-50',
+          'flex w-9 shrink-0 flex-col items-center border-stone-200 bg-stone-50',
           borderClass,
         )}
       >
@@ -35,12 +35,12 @@ export function CollapsiblePanel({
           title={`Show ${title}`}
           aria-expanded={false}
           aria-label={`Expand ${title}`}
-          className="flex w-full items-center justify-center border-b border-zinc-200 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-100"
+          className="flex w-full items-center justify-center border-b border-stone-200 py-2 text-sm font-medium text-stone-600 hover:bg-stone-100"
         >
           {CollapseIcon}
         </button>
         <span
-          className="mt-3 select-none px-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500"
+          className="mt-3 select-none px-1 text-[10px] font-semibold uppercase tracking-wider text-stone-500"
           style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}
         >
           {title}
@@ -52,27 +52,25 @@ export function CollapsiblePanel({
   return (
     <aside
       className={clsx(
-        'flex shrink-0 flex-col border-zinc-200 bg-white',
+        'flex shrink-0 flex-col border-stone-200 bg-white',
         widthClass,
         borderClass,
       )}
     >
-      <div className="flex shrink-0 items-center justify-between border-b border-zinc-200 bg-zinc-50 px-2 py-1.5">
-        <h2 className="truncate text-xs font-semibold uppercase tracking-wide text-zinc-600">
-          {title}
-        </h2>
+      <div className="panel-header flex shrink-0 items-center justify-between px-2 py-2">
+        <h2 className="truncate text-xs font-bold uppercase tracking-wide">{title}</h2>
         <button
           type="button"
           onClick={() => setOpen(false)}
           title={`Hide ${title}`}
           aria-expanded
           aria-label={`Collapse ${title}`}
-          className="rounded px-1.5 py-0.5 text-sm text-zinc-500 hover:bg-zinc-200"
+          className="rounded-md bg-white/15 px-1.5 py-0.5 text-sm transition hover:bg-white/25"
         >
           {CollapseIcon}
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto bg-stone-50/40">{children}</div>
     </aside>
   );
 }

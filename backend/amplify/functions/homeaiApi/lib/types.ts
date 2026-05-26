@@ -15,6 +15,8 @@ export interface RoomRecord {
   widthFt: number;
   depthFt: number;
   heightFt: number;
+  layoutX?: number;
+  layoutZ?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -22,7 +24,14 @@ export interface RoomRecord {
 export interface PlacementRecord {
   placementId: string;
   roomId: string;
-  catalogItemId: string;
+  catalogItemId?: string;
+  customItem?: {
+    label: string;
+    shape: 'box' | 'round';
+    widthIn: number;
+    depthIn: number;
+    heightIn: number;
+  };
   positionX: number;
   positionY: number;
   positionZ: number;

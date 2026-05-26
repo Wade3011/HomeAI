@@ -2,7 +2,8 @@
 
 import { Canvas } from '@react-three/fiber';
 import { Grid } from '@react-three/drei';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { endActiveDragSession } from '@/lib/planner/dragSession';
 import type { CatalogItem, Placement, Room } from '@/types';
 import { PlacementMesh } from '@/components/planner/PlacementMesh';
 import { FloorClickPlane } from '@/components/planner/FloorClickPlane';
@@ -10,10 +11,14 @@ import { SceneControls } from '@/components/planner/SceneControls';
 import {
   buildFootprints,
   catalogDimensionsFt,
+  orientedDimensions,
   resolveCountertopPosition,
   resolvePlacementPosition,
 } from '@/components/planner/placementCollision';
-import { isCountertopItem } from '@/lib/placementHeight';
+import { CABINET_GRID_FT, clampPlacementOrigin, snapToGrid } from '@/components/planner/plannerUtils';
+import { isBaseCabinetItem, isCountertopItem } from '@/lib/placementHeight';
+import { resolvePlacementItem } from '@/lib/placementItem';
+import type { CustomItemSpec } from '@/types';
 import { BaseCabinetHighlights } from '@/components/planner/BaseCabinetHighlights';
 import { isWallCabinet } from '@/config/catalogCategories';
 import { applyPlacementSnap, inferWallFromPlacement, type RoomWallId } from '@/lib/placementSnap';
@@ -33,23 +38,45 @@ export function PlannerScene({
   selectedPlacementId,
   onSelectPlacement,
   catalogItemForPlace,
+  customItemForPlace = null,
   placeRotationSteps = 0,
   onPlaceAt,
+  onPlaceCustomAt,
   onMovePlacement,
   onRotatePlacement,
+  onDeselect,
+  onCancelPlaceMode,
 }: {
   room: Room;
   placements: Placement[];
   catalogById: Record<string, CatalogItem>;
   catalogItemForPlace: CatalogItem | null;
+  customItemForPlace?: CustomItemSpec | null;
   placeRotationSteps?: number;
   selectedPlacementId: string | null;
   onSelectPlacement: (id: string | null) => void;
   onPlaceAt: (x: number, z: number, rotationY: number) => boolean;
+  onPlaceCustomAt: (x: number, z: number, rotationY: number) => boolean;
   onMovePlacement: (id: string, x: number, z: number) => void;
   onRotatePlacement: (id: string) => boolean;
+  onDeselect?: () => void;
+  onCancelPlaceMode?: () => void;
 }) {
   const [isDragging, setIsDragging] = useState(false);
+  const isDraggingRef = useRef(false);
+  const setDragging = (value: boolean) => {
+    isDraggingRef.current = value;
+    setIsDragging(value);
+  };
+
+  useEffect(() => {
+    const resetDrag = () => {
+      endActiveDragSession();
+      setDragging(false);
+    };
+    window.addEventListener('blur', resetDrag);
+    return () => window.removeEventListener('blur', resetDrag);
+  }, []);
 
   const footprints = useMemo(
     () => buildFootprints(placements, catalogById),
@@ -70,20 +97,29 @@ export function PlannerScene({
     !!catalogItemForPlace && isWallCabinet(catalogItemForPlace);
   const placingCountertop =
     !!catalogItemForPlace && isCountertopItem(catalogItemForPlace);
+  const placingFloorItem =
+    !!catalogItemForPlace && !placingWall && !placingCountertop;
+  const placingCustomFloor = !!customItemForPlace;
+  const placementModeActive = !!catalogItemForPlace || placingCustomFloor;
 
   const handlePlaceAt = (
     clickX: number,
     clickZ: number,
     catalogItem?: CatalogItem,
     wall?: RoomWallId,
+    rotationOverride?: number,
   ): boolean => {
     if (!catalogItem) return false;
     const { widthFt, depthFt } = catalogDimensionsFt(catalogItem);
+    const rotationStepsForSnap =
+      rotationOverride !== undefined
+        ? (((Math.round(rotationOverride / (Math.PI / 2)) % 4) + 4) % 4)
+        : placeRotationSteps;
     const snapped = applyPlacementSnap(
       clickX,
       clickZ,
       catalogItem,
-      placeRotationSteps,
+      rotationStepsForSnap,
       placements,
       catalogById,
       size.w,
@@ -92,7 +128,8 @@ export function PlannerScene({
     );
     if (!snapped) return false;
 
-    const rotationY = snapped.rotationY ?? rotationYFromSteps(placeRotationSteps);
+    const rotationY =
+      rotationOverride ?? snapped.rotationY ?? rotationYFromSteps(placeRotationSteps);
 
     const resolved = isCountertopItem(catalogItem)
       ? resolveCountertopPosition({
@@ -106,6 +143,7 @@ export function PlannerScene({
           footprints,
           catalogById,
           placingItem: catalogItem,
+          nudgeFt: 1.5,
         })
       : resolvePlacementPosition({
           x: snapped.x,
@@ -118,15 +156,36 @@ export function PlannerScene({
           footprints,
           placingItem: catalogItem,
           catalogById,
+          nudgeFt: 2,
         });
     if (!resolved) return false;
     return onPlaceAt(resolved.x, resolved.z, rotationY);
   };
 
   const selectedPlacement = placements.find((p) => p.placementId === selectedPlacementId);
-  const selectedItem = selectedPlacement
+  const selectedItem = selectedPlacement?.catalogItemId
     ? catalogById[selectedPlacement.catalogItemId]
     : undefined;
+  const selectedResolved = selectedPlacement
+    ? resolvePlacementItem(selectedPlacement, catalogById)
+    : null;
+
+  const handleCustomPlaceAt = (clickX: number, clickZ: number): boolean => {
+    if (!customItemForPlace) return false;
+    const widthFt = customItemForPlace.widthIn / INCHES_PER_FOOT;
+    const depthFt = customItemForPlace.depthIn / INCHES_PER_FOOT;
+    const rotationY = rotationYFromSteps(placeRotationSteps);
+    const o = orientedDimensions(widthFt, depthFt, rotationY);
+    const clamped = clampPlacementOrigin(
+      snapToGrid(clickX - o.widthFt / 2, CABINET_GRID_FT),
+      snapToGrid(clickZ - o.depthFt / 2, CABINET_GRID_FT),
+      o.widthFt,
+      o.depthFt,
+      size.w,
+      size.d,
+    );
+    return onPlaceCustomAt(clamped.x, clamped.z, rotationY);
+  };
 
   const selectedWallCabinetWall = useMemo((): RoomWallId | null => {
     if (!selectedPlacement || !selectedItem || !isWallCabinet(selectedItem)) return null;
@@ -144,7 +203,7 @@ export function PlannerScene({
 
   return (
     <div
-      className="relative h-full min-h-[480px] w-full rounded-xl border border-zinc-200 bg-zinc-100 outline-none focus:ring-2 focus:ring-blue-200"
+      className="relative h-full min-h-[480px] w-full overflow-hidden rounded-xl border border-stone-300 bg-[#ebe8e3] outline-none ring-1 ring-stone-200 focus-within:ring-[var(--sage-600)]"
       tabIndex={0}
       role="application"
       aria-label="Kitchen planner 3D view"
@@ -154,21 +213,23 @@ export function PlannerScene({
         }
       }}
     >
-      <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-lg bg-white/90 px-3 py-2 text-xs text-zinc-600 shadow-sm">
+      <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-xl border border-white/50 bg-slate-900/75 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-sm">
         <p>
           <strong>Drag</strong> rotate · <strong>Shift+drag</strong> pan · <strong>Right/middle-drag</strong> pan ·{' '}
-          <strong>Arrow keys</strong> move · <strong>Scroll</strong> zoom · click empty space to deselect
+          <strong>Arrow keys</strong> move · <strong>Scroll</strong> zoom · click floor to deselect · <strong>Esc</strong> cancel
         </p>
       </div>
       <Canvas
         camera={{ position: cameraPosition, fov: 45 }}
-        dpr={[1, 1.5]}
+        dpr={[1, 1.25]}
+        frameloop="demand"
         performance={{ min: 0.5 }}
         onPointerMissed={() => {
-          if (!catalogItemForPlace) onSelectPlacement(null);
+          if (isDraggingRef.current) return;
+          onSelectPlacement(null);
         }}
       >
-        <color attach="background" args={['#f4f4f5']} />
+        <color attach="background" args={['#ebe8e3']} />
         <ambientLight intensity={0.65} />
         <directionalLight position={[8, 14, 6]} intensity={1.1} />
         <BaseCabinetHighlights
@@ -177,19 +238,20 @@ export function PlannerScene({
           active={placingCountertop}
         />
         <RoomFloorDimensions room={room} />
-        {selectedPlacement && selectedItem && !isDragging && (
+        {selectedPlacement && selectedResolved && (
           <SelectedPlacementDimensions
             room={room}
             placement={selectedPlacement}
-            item={selectedItem}
+            widthFt={selectedResolved.widthFt}
+            depthFt={selectedResolved.depthFt}
           />
         )}
         <Grid
           args={[size.w, size.d]}
           cellSize={1}
           sectionSize={1}
-          cellColor="#d4d4d8"
-          sectionColor="#a1a1aa"
+          cellColor="#d6d3d1"
+          sectionColor="#a8a29e"
           fadeDistance={50}
           position={[size.w / 2, 0.02, size.d / 2]}
           raycast={() => null}
@@ -213,33 +275,36 @@ export function PlannerScene({
           activeWall={placingWall ? null : selectedWallCabinetWall}
           isPlacing={placingWall}
           onPlace={(clickX, clickZ, wall) => {
-            handlePlaceAt(clickX, clickZ, catalogItemForPlace ?? undefined, wall);
+            if (!catalogItemForPlace) return;
+            handlePlaceAt(clickX, clickZ, catalogItemForPlace, wall);
           }}
         />
         {placements.map((p) => {
-          const item = catalogById[p.catalogItemId];
-          if (!item) return null;
-          const w = item.widthIn / INCHES_PER_FOOT;
-          const d = item.depthIn / INCHES_PER_FOOT;
-          const h = item.heightIn / INCHES_PER_FOOT;
+          const resolved = resolvePlacementItem(p, catalogById);
+          if (!resolved) return null;
           return (
             <PlacementMesh
               key={p.placementId}
               placement={p}
-              item={item}
-              width={w}
-              depth={d}
-              height={h}
+              resolved={resolved}
               roomWidth={size.w}
               roomDepth={size.d}
               footprints={footprints}
               catalogById={catalogById}
               placements={placements}
               selected={p.placementId === selectedPlacementId}
-              onSelect={() => onSelectPlacement(p.placementId)}
+              countertopPlaceItem={placingCountertop ? catalogItemForPlace : null}
+              onCountertopPlace={(clickX, clickZ, baseRotationY) => {
+                if (!catalogItemForPlace) return;
+                handlePlaceAt(clickX, clickZ, catalogItemForPlace, undefined, baseRotationY);
+              }}
+              onSelect={() => {
+                onCancelPlaceMode?.();
+                onSelectPlacement(p.placementId);
+              }}
               onMove={(x, z) => onMovePlacement(p.placementId, x, z)}
-              onDragStart={() => setIsDragging(true)}
-              onDragEnd={() => setIsDragging(false)}
+              onDragStart={() => setDragging(true)}
+              onDragEnd={() => setDragging(false)}
               onRotate={() => onRotatePlacement(p.placementId)}
             />
           );
@@ -247,12 +312,26 @@ export function PlannerScene({
         <FloorClickPlane
           width={size.w}
           depth={size.d}
-          isPlacing={!!catalogItemForPlace && !placingWall}
+          isPlacing={placingFloorItem || placingCustomFloor}
           onPlace={(x, z) => {
-            handlePlaceAt(x, z, catalogItemForPlace ?? undefined);
+            if (placingCustomFloor) {
+              handleCustomPlaceAt(x, z);
+              return;
+            }
+            if (!catalogItemForPlace) return;
+            handlePlaceAt(x, z, catalogItemForPlace);
+          }}
+          onDeselect={() => {
+            onCancelPlaceMode?.();
+            onSelectPlacement(null);
+            onDeselect?.();
           }}
         />
-        <SceneControls target={[size.w / 2, 0, size.d / 2]} isDraggingItem={isDragging} />
+        <SceneControls
+          target={[size.w / 2, 0, size.d / 2]}
+          isDraggingItem={isDragging}
+          placementMode={placementModeActive}
+        />
       </Canvas>
     </div>
   );

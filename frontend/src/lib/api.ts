@@ -31,6 +31,12 @@ export async function fetchProjects(): Promise<Project[]> {
   return data.projects;
 }
 
+export async function fetchProject(projectId: string): Promise<Project> {
+  const res = await fetch(`/api/projects/${projectId}`, { credentials: 'include' });
+  const data = await parseJson<{ project: Project }>(res);
+  return data.project;
+}
+
 export async function createProject(name: string): Promise<Project> {
   const res = await fetch('/api/projects', {
     method: 'POST',
@@ -70,7 +76,7 @@ export async function fetchRoom(roomId: string): Promise<Room> {
 
 export async function updateRoom(
   roomId: string,
-  patch: Partial<Pick<Room, 'name' | 'widthFt' | 'depthFt' | 'heightFt'>>,
+  patch: Partial<Pick<Room, 'name' | 'widthFt' | 'depthFt' | 'heightFt' | 'layoutX' | 'layoutZ'>>,
 ): Promise<Room> {
   const res = await fetch(`/api/rooms/${roomId}`, {
     method: 'PUT',

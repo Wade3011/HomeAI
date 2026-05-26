@@ -1,7 +1,10 @@
 import type { CatalogItem, Placement } from '@/types';
+import { resolvePlacementItem } from '@/lib/placementItem';
 import {
   isBaseCabinetItem,
   isCountertopItem,
+  isShowerItem,
+  isToiletItem,
   isWallCabinetItem,
 } from '@/lib/placementHeight';
 import { countertopHasBaseSupport } from '@/lib/placementHeight';
@@ -11,7 +14,8 @@ const INCHES_PER_FOOT = 12;
 
 export interface PlacementFootprint {
   placementId: string;
-  catalogItemId: string;
+  catalogItemId?: string;
+  isCustom: boolean;
   x: number;
   z: number;
   widthFt: number;
@@ -39,6 +43,25 @@ export function orientedDimensions(
     : { widthFt, depthFt };
 }
 
+/** Keep footprint center fixed when rotating 90° steps. */
+export function placementOriginAfterRotation(
+  positionX: number,
+  positionZ: number,
+  widthFt: number,
+  depthFt: number,
+  oldRotationY: number,
+  newRotationY: number,
+): { positionX: number; positionZ: number } {
+  const oldO = orientedDimensions(widthFt, depthFt, oldRotationY);
+  const newO = orientedDimensions(widthFt, depthFt, newRotationY);
+  const centerX = positionX + oldO.widthFt / 2;
+  const centerZ = positionZ + oldO.depthFt / 2;
+  return {
+    positionX: centerX - newO.widthFt / 2,
+    positionZ: centerZ - newO.depthFt / 2,
+  };
+}
+
 export function boxesOverlap2d(
   ax: number,
   az: number,
@@ -63,6 +86,12 @@ function shouldCollide(
   if (isBaseCabinetItem(placingItem) && isWallCabinetItem(otherItem)) return false;
   if (isWallCabinetItem(placingItem) && isCountertopItem(otherItem)) return false;
   if (isCountertopItem(placingItem) && isWallCabinetItem(otherItem)) return false;
+  if (isWallCabinetItem(placingItem) && (isToiletItem(otherItem) || isShowerItem(otherItem))) {
+    return false;
+  }
+  if ((isToiletItem(placingItem) || isShowerItem(placingItem)) && isWallCabinetItem(otherItem)) {
+    return false;
+  }
   return true;
 }
 
@@ -80,7 +109,11 @@ export function overlapsAny(
   const { widthFt: w, depthFt: d } = orientedDimensions(widthFt, depthFt, rotationY);
   for (const other of others) {
     if (other.placementId === excludePlacementId) continue;
-    const otherItem = catalogById?.[other.catalogItemId];
+    const otherItem = other.isCustom
+      ? undefined
+      : other.catalogItemId
+        ? catalogById?.[other.catalogItemId]
+        : undefined;
     if (!shouldCollide(placingItem, otherItem)) continue;
 
     const o = orientedDimensions(other.widthFt, other.depthFt, other.rotationY);
@@ -95,22 +128,22 @@ export function buildFootprints(
   placements: Placement[],
   catalogById: Record<string, CatalogItem>,
 ): PlacementFootprint[] {
-  return placements
-    .map((p) => {
-      const item = catalogById[p.catalogItemId];
-      if (!item) return null;
-      const { widthFt, depthFt } = catalogDimensionsFt(item);
-      return {
-        placementId: p.placementId,
-        catalogItemId: p.catalogItemId,
-        x: p.positionX,
-        z: p.positionZ,
-        widthFt,
-        depthFt,
-        rotationY: p.rotationY,
-      };
-    })
-    .filter((f): f is PlacementFootprint => f !== null);
+  const out: PlacementFootprint[] = [];
+  for (const p of placements) {
+    const resolved = resolvePlacementItem(p, catalogById);
+    if (!resolved) continue;
+    out.push({
+      placementId: p.placementId,
+      catalogItemId: p.catalogItemId,
+      isCustom: resolved.isCustom,
+      x: p.positionX,
+      z: p.positionZ,
+      widthFt: resolved.widthFt,
+      depthFt: resolved.depthFt,
+      rotationY: p.rotationY,
+    });
+  }
+  return out;
 }
 
 export function resolvePlacementPosition({
@@ -127,6 +160,8 @@ export function resolvePlacementPosition({
   catalogById,
   fallbackX,
   fallbackZ,
+  gridFt = CABINET_GRID_FT,
+  nudgeFt = 0,
 }: {
   x: number;
   z: number;
@@ -142,41 +177,17 @@ export function resolvePlacementPosition({
   /** Last valid position while dragging — held when new position overlaps */
   fallbackX?: number;
   fallbackZ?: number;
+  /** Snap grid in feet. Defaults to coarse 6" placement grid. */
+  gridFt?: number;
+  /** If > 0, search outward in `gridFt` steps up to this distance for a valid spot. */
+  nudgeFt?: number;
 }): { x: number; z: number } | null {
   const oriented = orientedDimensions(widthFt, depthFt, rotationY);
-  const snapped = {
-    x: snapToGrid(x),
-    z: snapToGrid(z),
-  };
-  const clamped = clampPlacementOrigin(
-    snapped.x,
-    snapped.z,
-    oriented.widthFt,
-    oriented.depthFt,
-    roomWidthFt,
-    roomDepthFt,
-  );
 
-  if (
-    !overlapsAny(
-      clamped.x,
-      clamped.z,
-      widthFt,
-      depthFt,
-      rotationY,
-      footprints,
-      excludePlacementId,
-      placingItem,
-      catalogById,
-    )
-  ) {
-    return clamped;
-  }
-
-  if (fallbackX !== undefined && fallbackZ !== undefined) {
-    const fb = clampPlacementOrigin(
-      fallbackX,
-      fallbackZ,
+  const tryAt = (px: number, pz: number): { x: number; z: number } | null => {
+    const c = clampPlacementOrigin(
+      snapToGrid(px, gridFt),
+      snapToGrid(pz, gridFt),
       oriented.widthFt,
       oriented.depthFt,
       roomWidthFt,
@@ -184,8 +195,8 @@ export function resolvePlacementPosition({
     );
     if (
       !overlapsAny(
-        fb.x,
-        fb.z,
+        c.x,
+        c.z,
         widthFt,
         depthFt,
         rotationY,
@@ -195,10 +206,53 @@ export function resolvePlacementPosition({
         catalogById,
       )
     ) {
-      return fb;
+      return c;
     }
+    return null;
+  };
+
+  const first = tryAt(x, z);
+  if (first) return first;
+
+  if (nudgeFt > 0) {
+    const nudged = nudgeSearch(x, z, nudgeFt, gridFt, tryAt);
+    if (nudged) return nudged;
   }
 
+  if (fallbackX !== undefined && fallbackZ !== undefined) {
+    const fb = tryAt(fallbackX, fallbackZ);
+    if (fb) return fb;
+  }
+
+  return null;
+}
+
+/** Spiral outward in grid-aligned steps, looking for the nearest non-overlapping spot. */
+function nudgeSearch(
+  x: number,
+  z: number,
+  maxNudgeFt: number,
+  gridFt: number,
+  tryAt: (px: number, pz: number) => { x: number; z: number } | null,
+): { x: number; z: number } | null {
+  const maxRings = Math.max(1, Math.round(maxNudgeFt / gridFt));
+  for (let ring = 1; ring <= maxRings; ring++) {
+    const d = ring * gridFt;
+    const candidates: [number, number][] = [
+      [x + d, z],
+      [x - d, z],
+      [x, z + d],
+      [x, z - d],
+      [x + d, z + d],
+      [x + d, z - d],
+      [x - d, z + d],
+      [x - d, z - d],
+    ];
+    for (const [cx, cz] of candidates) {
+      const result = tryAt(cx, cz);
+      if (result) return result;
+    }
+  }
   return null;
 }
 
@@ -217,6 +271,8 @@ export function resolveCountertopPosition({
   excludePlacementId,
   fallbackX,
   fallbackZ,
+  gridFt = CABINET_GRID_FT,
+  nudgeFt = 0,
 }: {
   x: number;
   z: number;
@@ -231,22 +287,24 @@ export function resolveCountertopPosition({
   excludePlacementId?: string;
   fallbackX?: number;
   fallbackZ?: number;
+  gridFt?: number;
+  nudgeFt?: number;
 }): { x: number; z: number } | null {
   const oriented = orientedDimensions(widthFt, depthFt, rotationY);
-  const clamped = clampPlacementOrigin(
-    snapToGrid(x, CABINET_GRID_FT),
-    snapToGrid(z, CABINET_GRID_FT),
-    oriented.widthFt,
-    oriented.depthFt,
-    roomWidthFt,
-    roomDepthFt,
-  );
 
-  const checkValid = (px: number, pz: number) => {
+  const tryAt = (px: number, pz: number): { x: number; z: number } | null => {
+    const c = clampPlacementOrigin(
+      snapToGrid(px, gridFt),
+      snapToGrid(pz, gridFt),
+      oriented.widthFt,
+      oriented.depthFt,
+      roomWidthFt,
+      roomDepthFt,
+    );
     if (
       !countertopHasBaseSupportFromFootprints(
-        px,
-        pz,
+        c.x,
+        c.z,
         widthFt,
         depthFt,
         rotationY,
@@ -255,33 +313,53 @@ export function resolveCountertopPosition({
         excludePlacementId,
       )
     ) {
-      return false;
+      return null;
     }
-    return !overlapsAny(
-      px,
-      pz,
-      widthFt,
-      depthFt,
-      rotationY,
-      footprints,
-      excludePlacementId,
-      placingItem,
-      catalogById,
-    );
+    if (
+      overlapsAny(
+        c.x,
+        c.z,
+        widthFt,
+        depthFt,
+        rotationY,
+        footprints,
+        excludePlacementId,
+        placingItem,
+        catalogById,
+      )
+    ) {
+      return null;
+    }
+    return c;
   };
 
-  if (checkValid(clamped.x, clamped.z)) return clamped;
+  const first = tryAt(x, z);
+  if (first) return first;
+
+  if (nudgeFt > 0) {
+    const maxRings = Math.max(1, Math.round(nudgeFt / gridFt));
+    for (let ring = 1; ring <= maxRings; ring++) {
+      const d = ring * gridFt;
+      const candidates: [number, number][] = [
+        [x + d, z],
+        [x - d, z],
+        [x, z + d],
+        [x, z - d],
+        [x + d, z + d],
+        [x + d, z - d],
+        [x - d, z + d],
+        [x - d, z - d],
+      ];
+      for (const [cx, cz] of candidates) {
+        const result = tryAt(cx, cz);
+        if (result) return result;
+      }
+    }
+  }
 
   if (fallbackX !== undefined && fallbackZ !== undefined) {
-    const fb = clampPlacementOrigin(
-      fallbackX,
-      fallbackZ,
-      oriented.widthFt,
-      oriented.depthFt,
-      roomWidthFt,
-      roomDepthFt,
-    );
-    if (checkValid(fb.x, fb.z)) return fb;
+    const fb = tryAt(fallbackX, fallbackZ);
+    if (fb) return fb;
   }
 
   return null;

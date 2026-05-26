@@ -1,9 +1,18 @@
-import { catalogSectionForItem, WALL_CABINET_MOUNT_Y_FT } from '@/config/catalogCategories';
+import {
+  catalogSectionForItem,
+  isShowerItem,
+  isToiletItem,
+  WALL_CABINET_MOUNT_Y_FT,
+} from '@/config/catalogCategories';
+
+export { isShowerItem, isToiletItem };
 import type { CatalogItem, Placement } from '@/types';
 import {
   boxesOverlap2d,
+  buildFootprints,
   catalogDimensionsFt,
   orientedDimensions,
+  overlapsAny,
 } from '@/components/planner/placementCollision';
 
 const INCHES_PER_FOOT = 12;
@@ -36,7 +45,8 @@ export function countertopHasBaseSupport(
 ): boolean {
   const c = orientedDimensions(widthFt, depthFt, rotationY);
   for (const p of placements) {
-    const item = catalogById[p.catalogItemId];
+    if (p.customItem) continue;
+    const item = p.catalogItemId ? catalogById[p.catalogItemId] : undefined;
     if (!item || !isBaseCabinetItem(item)) continue;
     const { widthFt: bw, depthFt: bd } = catalogDimensionsFt(item);
     const b = orientedDimensions(bw, bd, p.rotationY);
@@ -61,7 +71,8 @@ export function countertopSurfaceYFt(
   let topY: number | null = null;
 
   for (const p of placements) {
-    const item = catalogById[p.catalogItemId];
+    if (p.customItem) continue;
+    const item = p.catalogItemId ? catalogById[p.catalogItemId] : undefined;
     if (!item || !isBaseCabinetItem(item)) continue;
     const { widthFt: bw, depthFt: bd } = catalogDimensionsFt(item);
     const b = orientedDimensions(bw, bd, p.rotationY);
@@ -94,7 +105,12 @@ export function resolvePlacementY(
     return countertopSurfaceYFt(x, z, widthFt, depthFt, rotationY, placements, catalogById);
   }
 
-  if (section === 'vanities' || section === 'base-cabinets') {
+  if (
+    section === 'vanities' ||
+    section === 'base-cabinets' ||
+    section === 'toilets' ||
+    section === 'showers'
+  ) {
     return 0;
   }
 
@@ -109,8 +125,14 @@ export function canPlaceItemAt(
   placements: Placement[],
   catalogById: Record<string, CatalogItem>,
 ): boolean {
+  const { widthFt, depthFt } = catalogDimensionsFt(item);
+  const footprints = buildFootprints(placements, catalogById);
+  if (
+    overlapsAny(x, z, widthFt, depthFt, rotationY, footprints, undefined, item, catalogById)
+  ) {
+    return false;
+  }
   if (isCountertopItem(item)) {
-    const { widthFt, depthFt } = catalogDimensionsFt(item);
     return countertopHasBaseSupport(x, z, widthFt, depthFt, rotationY, placements, catalogById);
   }
   return resolvePlacementY(item, x, z, rotationY, placements, catalogById) !== null;

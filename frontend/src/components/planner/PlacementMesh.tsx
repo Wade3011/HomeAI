@@ -1,42 +1,48 @@
 'use client';
 
-import { useThree } from '@react-three/fiber';
+import { useThree, type ThreeEvent } from '@react-three/fiber';
 import { memo, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { CatalogItem, Placement } from '@/types';
+import type { ResolvedPlacementItem } from '@/lib/placementItem';
 import { isWallCabinet } from '@/config/catalogCategories';
+import { isBaseCabinetItem } from '@/lib/placementHeight';
+import { meshColorForResolved, meshEmissive } from '@/lib/planner/meshColors';
 import { isCountertopItem, resolvePlacementY } from '@/lib/placementHeight';
+import { inferWallFromPlacement, type RoomWallId } from '@/lib/placementSnap';
 import {
-  inferWallFromPlacement,
-  snapCountertopPosition,
-  snapWallCabinetAlongWall,
-  type RoomWallId,
-} from '@/lib/placementSnap';
-import { raycastWallCoords } from '@/lib/wallRaycast';
+  clearActiveDragSession,
+  endActiveDragSession,
+  startDragSession,
+} from '@/lib/planner/dragSession';
+import { previewDragPosition } from '@/lib/planner/dragPreview';
+import { rayFromClient } from '@/lib/planner/pointerRaycast';
+import { FINE_GRID_FT } from '@/components/planner/plannerUtils';
 import {
   orientedDimensions,
   resolveCountertopPosition,
   resolvePlacementPosition,
   type PlacementFootprint,
 } from '@/components/planner/placementCollision';
-import type { Mesh } from 'three';
 
-const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-const hitPoint = new THREE.Vector3();
-const CLICK_MOVE_THRESHOLD_PX = 6;
+const POINTER_DRAG_THRESHOLD_PX = 4;
+const COMMIT_NUDGE_FT = 1; // search up to ~1ft for a valid spot on commit
+
+interface OrbitLike {
+  enabled: boolean;
+}
 
 function PlacementMeshInner({
   placement,
-  item,
-  width,
-  depth,
-  height,
+  resolved,
   roomWidth,
   roomDepth,
   footprints,
   catalogById,
   placements,
   selected,
+  countertopPlaceItem = null,
+  onCountertopPlace,
   onSelect,
   onMove,
   onDragStart,
@@ -44,34 +50,52 @@ function PlacementMeshInner({
   onRotate,
 }: {
   placement: Placement;
-  item: CatalogItem;
-  width: number;
-  depth: number;
-  height: number;
+  resolved: ResolvedPlacementItem;
   roomWidth: number;
   roomDepth: number;
   footprints: PlacementFootprint[];
   catalogById: Record<string, CatalogItem>;
   placements: Placement[];
   selected: boolean;
+  countertopPlaceItem?: CatalogItem | null;
+  onCountertopPlace?: (clickX: number, clickZ: number, baseRotationY: number) => void;
   onSelect: () => void;
   onMove: (x: number, z: number) => void;
   onDragStart: () => void;
   onDragEnd: () => void;
   onRotate: () => void;
 }) {
-  const meshRef = useRef<Mesh>(null);
+  const item = resolved.catalogItem;
+  const width = resolved.widthFt;
+  const depth = resolved.depthFt;
+  const height = resolved.heightFt;
   const groupRef = useRef<THREE.Group>(null);
-  const { gl, invalidate } = useThree();
+  const { camera, gl, invalidate } = useThree();
+  const controls = useThree((s) => s.controls) as unknown as OrbitLike | null;
+
   const dragging = useRef(false);
-  const moved = useRef(false);
+  const didDrag = useRef(false);
   const pointerStart = useRef<{ x: number; y: number } | null>(null);
-  const lastValid = useRef({ x: placement.positionX, z: placement.positionZ });
   const pendingCommit = useRef<{ x: number; z: number } | null>(null);
   const lockedWall = useRef<RoomWallId | null>(null);
+  const placementRef = useRef(placement);
+  placementRef.current = placement;
 
-  const isWall = isWallCabinet(item);
-  const isCounter = isCountertopItem(item);
+  const onSelectRef = useRef(onSelect);
+  const onMoveRef = useRef(onMove);
+  const onDragStartRef = useRef(onDragStart);
+  const onDragEndRef = useRef(onDragEnd);
+  const onCountertopPlaceRef = useRef(onCountertopPlace);
+  const onRotateRef = useRef(onRotate);
+  onSelectRef.current = onSelect;
+  onMoveRef.current = onMove;
+  onDragStartRef.current = onDragStart;
+  onDragEndRef.current = onDragEnd;
+  onCountertopPlaceRef.current = onCountertopPlace;
+  onRotateRef.current = onRotate;
+
+  const isWall = !!item && isWallCabinet(item);
+  const isCounter = !!item && isCountertopItem(item);
 
   const oriented = useMemo(
     () => orientedDimensions(width, depth, placement.rotationY),
@@ -93,208 +117,276 @@ function PlacementMeshInner({
   ]);
 
   useEffect(() => {
-    if (!dragging.current) {
-      lastValid.current = { x: placement.positionX, z: placement.positionZ };
-      if (groupRef.current) {
-        groupRef.current.position.set(...restPosition);
-      }
+    if (!dragging.current && groupRef.current) {
+      groupRef.current.position.set(...restPosition);
     }
-  }, [restPosition, placement.positionX, placement.positionZ]);
+  }, [restPosition]);
+
+  useEffect(() => () => endActiveDragSession(), []);
 
   const applyVisualPosition = (x: number, z: number, positionY?: number) => {
     const target = groupRef.current;
     if (!target) return;
-    const py = positionY ?? placement.positionY;
+    const p = placementRef.current;
+    const py = positionY ?? p.positionY;
     target.position.set(
       x + oriented.widthFt / 2,
       py + height / 2,
       z + oriented.depthFt / 2,
     );
-    invalidate();
   };
 
-  const resolveDragPosition = (ray: THREE.Ray): { x: number; z: number } | null => {
-    let clickX = 0;
-    let clickZ = 0;
-    let x = placement.positionX;
-    let z = placement.positionZ;
-
-    if (isWall && lockedWall.current) {
-      const wallCoords = raycastWallCoords(ray, lockedWall.current, roomWidth, roomDepth);
-      if (!wallCoords) return null;
-      clickX = wallCoords.clickX;
-      clickZ = wallCoords.clickZ;
-      const snapped = snapWallCabinetAlongWall(
-        lockedWall.current,
-        clickX,
-        clickZ,
-        width,
-        depth,
-        placement.rotationY,
-        roomWidth,
-        roomDepth,
-      );
-      x = snapped.x;
-      z = snapped.z;
-    } else if (!ray.intersectPlane(floorPlane, hitPoint)) {
-      return null;
-    } else if (isCounter) {
-      clickX = hitPoint.x;
-      clickZ = hitPoint.z;
-      const snapped = snapCountertopPosition(
-        clickX,
-        clickZ,
-        width,
-        depth,
-        placement.rotationY,
-        placements,
+  const commitResolved = (x: number, z: number): { x: number; z: number } | null => {
+    const p = placementRef.current;
+    if (resolved.isCustom) {
+      return resolvePlacementPosition({
+        x,
+        z,
+        widthFt: width,
+        depthFt: depth,
+        rotationY: p.rotationY,
+        roomWidthFt: roomWidth,
+        roomDepthFt: roomDepth,
+        footprints,
+        excludePlacementId: p.placementId,
         catalogById,
-        roomWidth,
-        roomDepth,
-        placement.placementId,
-      );
-      if (!snapped) return null;
-      x = snapped.x;
-      z = snapped.z;
-    } else {
-      x = hitPoint.x - oriented.widthFt / 2;
-      z = hitPoint.z - oriented.depthFt / 2;
+        fallbackX: p.positionX,
+        fallbackZ: p.positionZ,
+        gridFt: FINE_GRID_FT,
+        nudgeFt: COMMIT_NUDGE_FT,
+      });
     }
-
-    const resolved = isCounter
+    if (!item) return null;
+    return isCounter
       ? resolveCountertopPosition({
           x,
           z,
           widthFt: width,
           depthFt: depth,
-          rotationY: placement.rotationY,
+          rotationY: p.rotationY,
           roomWidthFt: roomWidth,
           roomDepthFt: roomDepth,
           footprints,
           catalogById,
           placingItem: item,
-          excludePlacementId: placement.placementId,
-          fallbackX: lastValid.current.x,
-          fallbackZ: lastValid.current.z,
+          excludePlacementId: p.placementId,
+          fallbackX: p.positionX,
+          fallbackZ: p.positionZ,
+          gridFt: FINE_GRID_FT,
+          nudgeFt: COMMIT_NUDGE_FT,
         })
       : resolvePlacementPosition({
           x,
           z,
           widthFt: width,
           depthFt: depth,
-          rotationY: placement.rotationY,
+          rotationY: p.rotationY,
           roomWidthFt: roomWidth,
           roomDepthFt: roomDepth,
           footprints,
-          excludePlacementId: placement.placementId,
+          excludePlacementId: p.placementId,
           placingItem: item,
           catalogById,
-          fallbackX: lastValid.current.x,
-          fallbackZ: lastValid.current.z,
+          fallbackX: p.positionX,
+          fallbackZ: p.positionZ,
+          gridFt: FINE_GRID_FT,
+          nudgeFt: COMMIT_NUDGE_FT,
         });
-
-    return resolved;
   };
 
-  const moveFromEvent = (e: { ray: THREE.Ray; stopPropagation: () => void }) => {
+  const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
+    if (e.button !== 0) return;
     e.stopPropagation();
-    const resolved = resolveDragPosition(e.ray);
-    if (!resolved) return;
 
-    lastValid.current = resolved;
-    pendingCommit.current = resolved;
-
-    let visualY = placement.positionY;
-    if (isCounter) {
-      const y = resolvePlacementY(
-        item,
-        resolved.x,
-        resolved.z,
-        placement.rotationY,
-        placements.filter((pl) => pl.placementId !== placement.placementId),
-        catalogById,
-      );
-      if (y !== null) visualY = y;
+    if (countertopPlaceItem && item && isBaseCabinetItem(item) && onCountertopPlaceRef.current) {
+      // Use the world-space hit on the cabinet itself — the floor under the base is
+      // far behind the cabinet from the camera, so a floor-only raycast misses.
+      const clickX = e.point.x;
+      const clickZ = e.point.z;
+      onCountertopPlaceRef.current(clickX, clickZ, placement.rotationY);
+      invalidate();
+      return;
     }
 
-    applyVisualPosition(resolved.x, resolved.z, visualY);
+    endActiveDragSession();
+
+    // Disable orbit controls immediately so the same gesture doesn't double up as a camera drag.
+    const prevControlsEnabled = controls?.enabled ?? true;
+    if (controls) controls.enabled = false;
+
+    const pointerId = e.pointerId;
+    try {
+      gl.domElement.setPointerCapture(pointerId);
+    } catch {
+      /* ignore */
+    }
+
+    const releasePointerCapture = () => {
+      try {
+        if (gl.domElement.hasPointerCapture(pointerId)) {
+          gl.domElement.releasePointerCapture(pointerId);
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+
+    didDrag.current = false;
+    dragging.current = false;
+    pendingCommit.current = null;
+    pointerStart.current = { x: e.clientX, y: e.clientY };
+
+    if (isWall) {
+      lockedWall.current = inferWallFromPlacement(
+        placement.positionX,
+        placement.positionZ,
+        width,
+        depth,
+        placement.rotationY,
+        roomWidth,
+        roomDepth,
+      );
+    }
+
+    const canvas = gl.domElement;
+
+    let cleaned = false;
+    let cleanupFn: (() => void) | null = null;
+
+    const onWindowMove = (ev: PointerEvent) => {
+      const start = pointerStart.current;
+      if (!start) return;
+
+      if (!didDrag.current) {
+        const dist = Math.hypot(ev.clientX - start.x, ev.clientY - start.y);
+        if (dist < POINTER_DRAG_THRESHOLD_PX) return;
+        didDrag.current = true;
+        dragging.current = true;
+        onDragStartRef.current();
+        gl.domElement.style.cursor = 'grabbing';
+      }
+
+      const preview = previewDragPosition({
+        ray: rayFromClient(ev.clientX, ev.clientY, camera, canvas),
+        item,
+        customFloorDims: resolved.isCustom ? { widthFt: width, depthFt: depth } : undefined,
+        placement: placementRef.current,
+        lockedWall: lockedWall.current,
+        roomWidthFt: roomWidth,
+        roomDepthFt: roomDepth,
+        placements,
+        catalogById,
+      });
+      if (!preview) return;
+
+      pendingCommit.current = preview;
+
+      let visualY = placementRef.current.positionY;
+      if (isCounter && item) {
+        const y = resolvePlacementY(
+          item,
+          preview.x,
+          preview.z,
+          placementRef.current.rotationY,
+          placements.filter((pl) => pl.placementId !== placementRef.current.placementId),
+          catalogById,
+        );
+        if (y !== null) visualY = y;
+      }
+
+      applyVisualPosition(preview.x, preview.z, visualY);
+      invalidate();
+    };
+
+    const finishInteraction = () => {
+      if (cleaned) return;
+      cleaned = true;
+      window.removeEventListener('pointermove', onWindowMove);
+      window.removeEventListener('pointerup', onWindowUp);
+      window.removeEventListener('pointercancel', onWindowUp);
+      releasePointerCapture();
+      if (cleanupFn) clearActiveDragSession(cleanupFn);
+      gl.domElement.style.cursor = '';
+      dragging.current = false;
+      lockedWall.current = null;
+      pointerStart.current = null;
+      if (controls) controls.enabled = prevControlsEnabled;
+    };
+
+    const onWindowUp = () => {
+      const moved = didDrag.current;
+      finishInteraction();
+
+      if (!moved) {
+        onSelectRef.current();
+        invalidate();
+        onDragEndRef.current();
+        return;
+      }
+
+      const commit = pendingCommit.current;
+      pendingCommit.current = null;
+      if (commit) {
+        const committed = commitResolved(commit.x, commit.z);
+        if (committed) {
+          onMoveRef.current(committed.x, committed.z);
+        } else {
+          applyVisualPosition(
+            placementRef.current.positionX,
+            placementRef.current.positionZ,
+          );
+        }
+      }
+      invalidate();
+      onDragEndRef.current();
+    };
+
+    cleanupFn = () => {
+      // Called if a NEW drag session preempts this one (e.g. tab lost focus during drag).
+      finishInteraction();
+      onDragEndRef.current();
+    };
+    startDragSession(cleanupFn);
+
+    window.addEventListener('pointermove', onWindowMove);
+    window.addEventListener('pointerup', onWindowUp);
+    window.addEventListener('pointercancel', onWindowUp);
   };
 
   return (
     <group ref={groupRef} position={restPosition} rotation={[0, placement.rotationY, 0]}>
       <mesh
-        ref={meshRef}
-        onDoubleClick={(e) => {
-          e.stopPropagation();
-          onRotate();
+        onDoubleClick={(ev) => {
+          ev.stopPropagation();
+          endActiveDragSession();
+          onRotateRef.current();
+          invalidate();
         }}
-        onClick={(e) => {
-          e.stopPropagation();
-          const start = pointerStart.current;
-          const movedPx =
-            start &&
-            Math.hypot(e.clientX - start.x, e.clientY - start.y) > CLICK_MOVE_THRESHOLD_PX;
-          if (!moved.current && !movedPx) onSelect();
-          moved.current = false;
-          pointerStart.current = null;
-        }}
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          dragging.current = true;
-          moved.current = false;
-          pendingCommit.current = null;
-          pointerStart.current = { x: e.clientX, y: e.clientY };
-          lastValid.current = { x: placement.positionX, z: placement.positionZ };
-          if (isWall) {
-            lockedWall.current = inferWallFromPlacement(
-              placement.positionX,
-              placement.positionZ,
-              width,
-              depth,
-              placement.rotationY,
-              roomWidth,
-              roomDepth,
-            );
+        onPointerDown={handlePointerDown}
+        onPointerOver={(ev) => {
+          ev.stopPropagation();
+          if (!dragging.current) {
+            gl.domElement.style.cursor =
+              countertopPlaceItem && item && isBaseCabinetItem(item) ? 'pointer' : 'grab';
           }
-          onDragStart();
-          gl.domElement.setPointerCapture(e.pointerId);
-          gl.domElement.style.cursor = 'grabbing';
-        }}
-        onPointerUp={(e) => {
-          e.stopPropagation();
-          dragging.current = false;
-          lockedWall.current = null;
-          gl.domElement.style.cursor = '';
-          try {
-            gl.domElement.releasePointerCapture(e.pointerId);
-          } catch {
-            /* already released */
-          }
-          const commit = pendingCommit.current;
-          pendingCommit.current = null;
-          if (commit) {
-            onMove(commit.x, commit.z);
-          }
-          onDragEnd();
-        }}
-        onPointerMove={(e) => {
-          if (!dragging.current) return;
-          moved.current = true;
-          moveFromEvent(e);
-        }}
-        onPointerOver={(e) => {
-          e.stopPropagation();
-          if (!dragging.current) gl.domElement.style.cursor = 'grab';
         }}
         onPointerOut={() => {
           if (!dragging.current) gl.domElement.style.cursor = '';
         }}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        {...({ eventPriority: 1 } as any)}
       >
-        <boxGeometry args={[width, height, depth]} />
-        <meshStandardMaterial
-          color={selected ? '#2563eb' : '#78716c'}
-          emissive={selected ? '#1d4ed8' : '#000000'}
-          emissiveIntensity={selected ? 0.15 : 0}
+        {resolved.shape === 'round' ? (
+          <cylinderGeometry
+            args={[Math.min(width, depth) / 2, Math.min(width, depth) / 2, height, 24]}
+          />
+        ) : (
+          <boxGeometry args={[width, height, depth]} />
+        )}
+        <meshLambertMaterial
+          color={meshColorForResolved(resolved, selected)}
+          emissive={meshEmissive(selected).color}
+          emissiveIntensity={meshEmissive(selected).intensity}
         />
       </mesh>
     </group>
@@ -302,12 +394,19 @@ function PlacementMeshInner({
 }
 
 export const PlacementMesh = memo(PlacementMeshInner, (prev, next) => {
+  if (prev.countertopPlaceItem?.itemId !== next.countertopPlaceItem?.itemId) return false;
   if (prev.selected !== next.selected) return false;
   if (prev.placement.placementId !== next.placement.placementId) return false;
   if (prev.placement.positionX !== next.placement.positionX) return false;
   if (prev.placement.positionY !== next.placement.positionY) return false;
   if (prev.placement.positionZ !== next.placement.positionZ) return false;
   if (prev.placement.rotationY !== next.placement.rotationY) return false;
+  if (prev.resolved.widthIn !== next.resolved.widthIn) return false;
+  if (prev.resolved.depthIn !== next.resolved.depthIn) return false;
+  if (prev.resolved.heightIn !== next.resolved.heightIn) return false;
+  if (prev.resolved.shape !== next.resolved.shape) return false;
+  if (prev.resolved.label !== next.resolved.label) return false;
+  if (prev.resolved.catalogItem?.itemId !== next.resolved.catalogItem?.itemId) return false;
   if (prev.footprints !== next.footprints) return false;
   return true;
 });

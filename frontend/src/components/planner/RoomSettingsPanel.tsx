@@ -36,9 +36,11 @@ export function RoomSettingsPanel({
 
   return (
     <div className="p-4">
-      <p className="text-xs text-zinc-500">Dimensions in feet</p>
-      <div className="mt-3 space-y-2">
-        <label className="block text-xs text-zinc-600">
+      <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+        Room dimensions (ft)
+      </p>
+      <div className="mt-3 space-y-3">
+        <label className="block text-xs font-medium text-stone-600">
           Width
           <input
             type="number"
@@ -46,10 +48,10 @@ export function RoomSettingsPanel({
             max={60}
             value={width}
             onChange={(e) => setWidth(e.target.value)}
-            className="mt-0.5 w-full rounded border border-zinc-200 px-2 py-1.5 text-sm"
+            className="input-modern"
           />
         </label>
-        <label className="block text-xs text-zinc-600">
+        <label className="block text-xs font-medium text-stone-600">
           Depth
           <input
             type="number"
@@ -57,10 +59,10 @@ export function RoomSettingsPanel({
             max={60}
             value={depth}
             onChange={(e) => setDepth(e.target.value)}
-            className="mt-0.5 w-full rounded border border-zinc-200 px-2 py-1.5 text-sm"
+            className="input-modern"
           />
         </label>
-        <label className="block text-xs text-zinc-600">
+        <label className="block text-xs font-medium text-stone-600">
           Height
           <input
             type="number"
@@ -68,7 +70,7 @@ export function RoomSettingsPanel({
             max={20}
             value={height}
             onChange={(e) => setHeight(e.target.value)}
-            className="mt-0.5 w-full rounded border border-zinc-200 px-2 py-1.5 text-sm"
+            className="input-modern"
           />
         </label>
       </div>
@@ -76,7 +78,7 @@ export function RoomSettingsPanel({
         type="button"
         onClick={handleApply}
         disabled={isSaving}
-        className="mt-3 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-100 disabled:opacity-50"
+        className="btn-primary mt-4 w-full disabled:opacity-50"
       >
         {isSaving ? 'Applying…' : 'Apply size'}
       </button>

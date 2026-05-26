@@ -1,5 +1,6 @@
 import { getCatalogItem, getCatalogItems } from '@/lib/catalog';
 import type { Placement, Project, Room } from '@/types';
+import { ROOM_TYPE_PRESETS, normalizeRoomType } from '@/config/roomTypes';
 
 export const DEV_PROJECT_ID = 'dev-project-1';
 export const DEV_ROOM_ID = 'dev-room-kitchen';
@@ -26,40 +27,40 @@ let rooms: Room[] = [
     widthFt: 14,
     depthFt: 12,
     heightFt: 9,
+    layoutX: 0,
+    layoutZ: 0,
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    roomId: 'dev-room-bathroom',
+    projectId: DEV_PROJECT_ID,
+    type: 'bathroom',
+    name: 'Bathroom',
+    widthFt: 8,
+    depthFt: 8,
+    heightFt: 9,
+    layoutX: 16,
+    layoutZ: 0,
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    roomId: 'dev-room-living',
+    projectId: DEV_PROJECT_ID,
+    type: 'living',
+    name: 'Living Room',
+    widthFt: 16,
+    depthFt: 14,
+    heightFt: 9,
+    layoutX: 0,
+    layoutZ: 14,
     createdAt: now,
     updatedAt: now,
   },
 ];
 
-let placements: Placement[] = [
-  {
-    placementId: 'place-1',
-    roomId: DEV_ROOM_ID,
-    catalogItemId: 'base-kraftmaid-30',
-    positionX: 2,
-    positionY: 0,
-    positionZ: 3,
-    rotationY: 0,
-  },
-  {
-    placementId: 'place-2',
-    roomId: DEV_ROOM_ID,
-    catalogItemId: 'wall-kraftmaid-30',
-    positionX: 2,
-    positionY: 4.5,
-    positionZ: 0,
-    rotationY: 0,
-  },
-  {
-    placementId: 'place-3',
-    roomId: DEV_ROOM_ID,
-    catalogItemId: 'counter-30',
-    positionX: 2,
-    positionY: 2.875,
-    positionZ: 3,
-    rotationY: 0,
-  },
-];
+let placements: Placement[] = [];
 
 export function getCatalog() {
   return getCatalogItems();
@@ -95,14 +96,18 @@ export function getRoomsForProject(projectId: string): Room[] {
 
 export function createRoom(projectId: string, input: Partial<Room>): Room {
   const t = new Date().toISOString();
+  const type = normalizeRoomType(input.type as string | undefined);
+  const preset = ROOM_TYPE_PRESETS[type];
   const room: Room = {
     roomId: `room-${crypto.randomUUID()}`,
     projectId,
-    type: input.type ?? 'kitchen',
-    name: input.name ?? 'Kitchen',
-    widthFt: input.widthFt ?? 14,
-    depthFt: input.depthFt ?? 12,
-    heightFt: input.heightFt ?? 9,
+    type,
+    name: input.name ?? preset.name,
+    widthFt: input.widthFt ?? preset.widthFt,
+    depthFt: input.depthFt ?? preset.depthFt,
+    heightFt: input.heightFt ?? preset.heightFt,
+    layoutX: input.layoutX ?? 0,
+    layoutZ: input.layoutZ ?? 0,
     createdAt: t,
     updatedAt: t,
   };
@@ -116,7 +121,9 @@ export function getRoom(roomId: string): Room | undefined {
 
 export function updateRoom(
   roomId: string,
-  patch: Partial<Pick<Room, 'name' | 'widthFt' | 'depthFt' | 'heightFt'>>,
+  patch: Partial<
+    Pick<Room, 'name' | 'widthFt' | 'depthFt' | 'heightFt' | 'layoutX' | 'layoutZ'>
+  >,
 ): Room | undefined {
   const idx = rooms.findIndex((r) => r.roomId === roomId);
   if (idx < 0) return undefined;
@@ -129,7 +136,15 @@ export function updateRoom(
   return updated;
 }
 
+const LEGACY_DEMO_PLACEMENT_IDS = new Set(['place-1', 'place-2', 'place-3']);
+
 export function getPlacements(roomId: string): Placement[] {
+  if (roomId === DEV_ROOM_ID) {
+    const legacy = placements.some((p) => LEGACY_DEMO_PLACEMENT_IDS.has(p.placementId));
+    if (legacy) {
+      placements = placements.filter((p) => p.roomId !== DEV_ROOM_ID);
+    }
+  }
   return placements.filter((p) => p.roomId === roomId);
 }
 
@@ -145,15 +160,19 @@ export function estimateRoomTotal(roomId: string): {
 } {
   const roomPlacements = getPlacements(roomId);
   let total = 0;
-  const lineItems = roomPlacements.map((p) => {
-    const item = getCatalogItem(p.catalogItemId);
-    const price = item?.listPrice ?? 0;
+  const lineItems = roomPlacements.flatMap((p) => {
+    if (p.customItem) return [];
+    const item = getCatalogItem(p.catalogItemId ?? '');
+    if (!item) return [];
+    const price = item.listPrice;
     total += price;
-    return {
-      placementId: p.placementId,
-      name: item?.name ?? p.catalogItemId,
-      price,
-    };
+    return [
+      {
+        placementId: p.placementId,
+        name: item.name,
+        price,
+      },
+    ];
   });
   return { total, lineItems, source: 'catalog-mock' };
 }

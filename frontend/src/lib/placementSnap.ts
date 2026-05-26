@@ -14,7 +14,8 @@ import {
   snapToGrid,
 } from '@/components/planner/plannerUtils';
 
-const COUNTERTOP_SNAP_MAX_FT = 6;
+const COUNTERTOP_SNAP_MAX_FT = 8;
+const COUNTERTOP_INSIDE_TOLERANCE_FT = 0.25;
 
 export type RoomWallId = 'back' | 'front' | 'left' | 'right';
 
@@ -181,7 +182,7 @@ export function inferWallFromPlacement(
   if (z < 0.5) return 'back';
   if (z + o.depthFt > roomDepthFt - 0.5) return 'front';
   if (x < 0.5) return 'left';
-  if (x + o.depthFt > roomWidthFt - 0.5) return 'right';
+  if (x + o.widthFt > roomWidthFt - 0.5) return 'right';
   return nearestWall(cx, cz, roomWidthFt, roomDepthFt);
 }
 
@@ -192,8 +193,14 @@ function pointInFootprint(
   z: number,
   w: number,
   d: number,
+  tolerance = 0,
 ): boolean {
-  return px >= x && px <= x + w && pz >= z && pz <= z + d;
+  return (
+    px >= x - tolerance &&
+    px <= x + w + tolerance &&
+    pz >= z - tolerance &&
+    pz <= z + d + tolerance
+  );
 }
 
 function getBasePlacements(
@@ -202,7 +209,7 @@ function getBasePlacements(
 ): { placement: Placement; item: CatalogItem; widthFt: number; depthFt: number }[] {
   return placements
     .map((p) => {
-      const item = catalogById[p.catalogItemId];
+      const item = catalogById[p.catalogItemId ?? ''];
       if (!item || !isBaseCabinetItem(item)) return null;
       const { widthFt, depthFt } = catalogDimensionsFt(item);
       return { placement: p, item, widthFt, depthFt };
@@ -269,11 +276,18 @@ export function snapCountertopPosition(
 
   for (const { placement: p, widthFt: bw, depthFt: bd } of bases) {
     const b = orientedDimensions(bw, bd, p.rotationY);
-    if (pointInFootprint(clickX, clickZ, p.positionX, p.positionZ, b.widthFt, b.depthFt)) {
-      const aligned = tryCandidate(
-        snapToGrid(p.positionX, CABINET_GRID_FT),
-        snapToGrid(p.positionZ, CABINET_GRID_FT),
-      );
+    if (
+      pointInFootprint(
+        clickX,
+        clickZ,
+        p.positionX,
+        p.positionZ,
+        b.widthFt,
+        b.depthFt,
+        COUNTERTOP_INSIDE_TOLERANCE_FT,
+      )
+    ) {
+      const aligned = tryCandidate(p.positionX, p.positionZ);
       if (aligned) return aligned;
 
       const slide = tryCandidate(
@@ -281,6 +295,12 @@ export function snapCountertopPosition(
         snapToGrid(p.positionZ, CABINET_GRID_FT),
       );
       if (slide) return slide;
+
+      const slideZ = tryCandidate(
+        snapToGrid(p.positionX, CABINET_GRID_FT),
+        snapToGrid(clickZ - o.depthFt / 2, CABINET_GRID_FT),
+      );
+      if (slideZ) return slideZ;
     }
   }
 

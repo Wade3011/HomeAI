@@ -18,7 +18,7 @@ export function BaseCabinetHighlights({
   return (
     <group>
       {placements.map((p) => {
-        const item = catalogById[p.catalogItemId];
+        const item = p.catalogItemId ? catalogById[p.catalogItemId] : undefined;
         if (!item || !isBaseCabinetItem(item)) return null;
         const { widthFt, depthFt } = catalogDimensionsFt(item);
         const o = orientedDimensions(widthFt, depthFt, p.rotationY);
@@ -31,7 +31,7 @@ export function BaseCabinetHighlights({
             raycast={() => null}
           >
             <boxGeometry args={[o.widthFt, 0.04, o.depthFt]} />
-            <meshStandardMaterial color="#22c55e" transparent opacity={0.35} />
+            <meshStandardMaterial color="#5c7a6a" transparent opacity={0.4} />
           </mesh>
         );
       })}

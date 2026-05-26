@@ -163,6 +163,8 @@ async function handleProjectRooms(
       widthFt: Number(body.widthFt ?? 12),
       depthFt: Number(body.depthFt ?? 14),
       heightFt: Number(body.heightFt ?? 9),
+      layoutX: body.layoutX != null ? Number(body.layoutX) : 0,
+      layoutZ: body.layoutZ != null ? Number(body.layoutZ) : 0,
       createdAt: now,
       updatedAt: now,
     };
@@ -208,6 +210,7 @@ async function handleRooms(
           placementId: p.placementId || randomUUID(),
           roomId,
           catalogItemId: p.catalogItemId,
+          customItem: p.customItem,
           positionX: Number(p.positionX),
           positionY: Number(p.positionY ?? 0),
           positionZ: Number(p.positionZ),
@@ -231,6 +234,8 @@ async function handleRooms(
       widthFt: body.widthFt != null ? Number(body.widthFt) : room.widthFt,
       depthFt: body.depthFt != null ? Number(body.depthFt) : room.depthFt,
       heightFt: body.heightFt != null ? Number(body.heightFt) : room.heightFt,
+      layoutX: body.layoutX != null ? Number(body.layoutX) : room.layoutX,
+      layoutZ: body.layoutZ != null ? Number(body.layoutZ) : room.layoutZ,
       updatedAt: new Date().toISOString(),
     };
     await putItem(tables.rooms(), updated);

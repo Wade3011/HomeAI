@@ -24,4 +24,4 @@ Regenerate after editing `scripts/generate-catalog.mjs`.
 
 ## Pricing
 
-List prices are approximate **2024–2026 US retail** averages for planning only—not quotes. Brand metadata includes reference prices (e.g. 24" base, $/sq ft). See `priceDisclaimer` in the JSON file.
+**Material-only** list prices. Menards-focused lines, toilets, and showers were manually calibrated (`priceSource: manual`, see `priceCalibratedAt` in JSON). Other cabinet brands scale from 24" reference anchors. Regenerate after editing `scripts/generate-catalog.mjs`.
