@@ -12,6 +12,8 @@ import {
   getRoomsForProject,
   savePlacements,
   setConnections,
+  setExteriorDoors,
+  getExteriorDoors,
   updateRoom as updateRoomInStore,
 } from '@/lib/mockStore';
 import {
@@ -19,7 +21,7 @@ import {
   getCatalogItemsForSections,
 } from '@/lib/catalog';
 import type { CatalogSectionId } from '@/config/catalogCategories';
-import type { Placement, RoomConnection } from '@/types';
+import type { ExteriorDoor, Placement, RoomConnection } from '@/types';
 
 function json(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -100,6 +102,17 @@ export async function handleMockApi(
             const incoming = (body.connections as RoomConnection[] | undefined) ?? [];
             const saved = setConnections(projectId, incoming);
             return json(200, { connections: saved });
+          }
+        }
+
+        if (parts[2] === 'exterior-doors') {
+          if (method === 'GET') {
+            return json(200, { exteriorDoors: getExteriorDoors(projectId) });
+          }
+          if (method === 'PUT') {
+            const incoming = (body.exteriorDoors as ExteriorDoor[] | undefined) ?? [];
+            const saved = setExteriorDoors(projectId, incoming);
+            return json(200, { exteriorDoors: saved });
           }
         }
       }

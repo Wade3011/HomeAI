@@ -4,7 +4,7 @@ import { Canvas } from '@react-three/fiber';
 import { Grid } from '@react-three/drei';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { endActiveDragSession } from '@/lib/planner/dragSession';
-import type { CatalogItem, CustomItemSpec, Placement, Room, RoomConnection } from '@/types';
+import type { CatalogItem, CustomItemSpec, ExteriorDoor, Placement, Room, RoomConnection } from '@/types';
 import { PlacementMesh } from '@/components/planner/PlacementMesh';
 import { FloorClickPlane } from '@/components/planner/FloorClickPlane';
 import { SceneControls } from '@/components/planner/SceneControls';
@@ -53,6 +53,7 @@ export function PlannerScene({
   onCancelPlaceMode,
   projectRooms = [],
   connections = [],
+  exteriorDoors = [],
 }: {
   room: Room;
   placements: Placement[];
@@ -70,6 +71,7 @@ export function PlannerScene({
   onCancelPlaceMode?: () => void;
   projectRooms?: Room[];
   connections?: RoomConnection[];
+  exteriorDoors?: ExteriorDoor[];
 }) {
   const [isDragging, setIsDragging] = useState(false);
   const [showWalls, setShowWalls] = useState(true);
@@ -99,8 +101,8 @@ export function PlannerScene({
   );
 
   const wallPlans = useMemo(
-    () => buildWallPlans(room, projectRooms, connections),
-    [room, projectRooms, connections],
+    () => buildWallPlans(room, projectRooms, connections, exteriorDoors),
+    [room, projectRooms, connections, exteriorDoors],
   );
 
   const hasConnections = wallPlans.some((w) => w.openings.length > 0);

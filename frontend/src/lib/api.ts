@@ -1,5 +1,6 @@
 import type {
   CatalogItem,
+  ExteriorDoor,
   Placement,
   PriceEstimate,
   Project,
@@ -131,6 +132,28 @@ export async function saveConnections(
   });
   const data = await parseJson<{ connections: RoomConnection[] }>(res);
   return data.connections;
+}
+
+export async function fetchExteriorDoors(projectId: string): Promise<ExteriorDoor[]> {
+  const res = await fetch(`/api/projects/${projectId}/exterior-doors`, {
+    credentials: 'include',
+  });
+  const data = await parseJson<{ exteriorDoors: ExteriorDoor[] }>(res);
+  return data.exteriorDoors;
+}
+
+export async function saveExteriorDoors(
+  projectId: string,
+  exteriorDoors: ExteriorDoor[],
+): Promise<ExteriorDoor[]> {
+  const res = await fetch(`/api/projects/${projectId}/exterior-doors`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ exteriorDoors }),
+  });
+  const data = await parseJson<{ exteriorDoors: ExteriorDoor[] }>(res);
+  return data.exteriorDoors;
 }
 
 export async function fetchPlacements(roomId: string): Promise<Placement[]> {

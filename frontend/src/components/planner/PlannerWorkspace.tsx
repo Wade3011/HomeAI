@@ -8,11 +8,13 @@ import {
   fetchCatalog,
   fetchCatalogByIds,
   fetchConnections,
+  fetchExteriorDoors,
   fetchProjectRooms,
   savePlacements,
   updateRoom,
 } from '@/lib/api';
 import { computePlacementEstimate } from '@/lib/estimate';
+import { formatFeetInchesTriple } from '@/lib/imperialDimensions';
 import { isWallCabinet } from '@/config/catalogCategories';
 import { roomTypePreset, normalizeRoomType } from '@/config/roomTypes';
 import {
@@ -150,6 +152,12 @@ function PlannerInner({
   const { data: connections = [] } = useQuery({
     queryKey: ['connections', projectId],
     queryFn: () => fetchConnections(projectId),
+    staleTime: 60_000,
+  });
+
+  const { data: exteriorDoors = [] } = useQuery({
+    queryKey: ['exterior-doors', projectId],
+    queryFn: () => fetchExteriorDoors(projectId),
     staleTime: 60_000,
   });
 
@@ -366,7 +374,7 @@ function PlannerInner({
         <div className="min-w-0">
           <h1 className="text-lg font-bold tracking-tight">{room.name}</h1>
           <p className="text-sm text-[var(--sage-100)]">
-            {roomPreset.label} · {room.widthFt}&apos; × {room.depthFt}&apos; × {room.heightFt}&apos; ·{' '}
+            {roomPreset.label} · {formatFeetInchesTriple(room.widthFt, room.depthFt, room.heightFt)} ·{' '}
             {placements.length} items
           </p>
           <div className="mt-2">
@@ -553,6 +561,7 @@ function PlannerInner({
               catalogById={catalogById}
               projectRooms={projectRooms}
               connections={connections}
+              exteriorDoors={exteriorDoors}
               catalogItemForPlace={catalogDragItem}
               customItemForPlace={customDragItem}
               placeRotationSteps={placeRotationSteps}

@@ -7,6 +7,7 @@ import clsx from 'clsx';
 import {
   fetchCatalogByIds,
   fetchConnections,
+  fetchExteriorDoors,
   fetchPlacements,
   fetchProject,
   fetchProjectRooms,
@@ -35,6 +36,11 @@ export default function ProjectHomeViewPage({
   const { data: connections = [] } = useQuery({
     queryKey: ['connections', projectId],
     queryFn: () => fetchConnections(projectId),
+  });
+
+  const { data: exteriorDoors = [] } = useQuery({
+    queryKey: ['exterior-doors', projectId],
+    queryFn: () => fetchExteriorDoors(projectId),
   });
 
   const placementQueries = useQueries({
@@ -132,6 +138,7 @@ export default function ProjectHomeViewPage({
         <HomeScene
           rooms={rooms}
           connections={connections}
+          exteriorDoors={exteriorDoors}
           placementsByRoomId={placementsByRoomId}
           catalogById={catalogById}
           focusRoomId={focusRoomId}
@@ -139,9 +146,10 @@ export default function ProjectHomeViewPage({
         />
       </div>
 
-      <div className="mt-4 grid gap-2 text-xs text-stone-500 sm:grid-cols-3">
+      <div className="mt-4 grid gap-2 text-xs text-stone-500 sm:grid-cols-2 lg:grid-cols-4">
         <Legend dot="#5c7a6a" label="Open connection (wall removed)" />
         <Legend dot="#a78bfa" label="Door (3ft opening + header)" />
+        <Legend dot="#d97706" label="Exterior door" />
         <Legend dot="#78716c" label="Solid wall" />
       </div>
     </main>

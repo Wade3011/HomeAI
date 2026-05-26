@@ -65,6 +65,17 @@ export interface RoomConnection {
   sideB?: RoomWallSide;
 }
 
+/** Exterior entry door on a room wall (not shared with another room). */
+export interface ExteriorDoor {
+  doorId: string;
+  projectId: string;
+  roomId: string;
+  side: RoomWallSide;
+  /** Center position along the wall in feet (wall-local). */
+  offsetFt: number;
+  widthFt?: number;
+}
+
 export interface Placement {
   placementId: string;
   roomId: string;

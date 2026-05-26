@@ -1,6 +1,6 @@
 import { getCatalogItem, getCatalogItems } from '@/lib/catalog';
 import { computeConnectedLayoutPatches, enrichConnectionSides } from '@/lib/homeLayout';
-import type { Placement, Project, Room, RoomConnection } from '@/types';
+import type { ExteriorDoor, Placement, Project, Room, RoomConnection } from '@/types';
 import { ROOM_TYPE_PRESETS, normalizeRoomType } from '@/config/roomTypes';
 
 export const DEV_PROJECT_ID = 'dev-project-1';
@@ -74,6 +74,8 @@ let connections: RoomConnection[] = [
     sideB: 'back',
   },
 ];
+
+let exteriorDoors: ExteriorDoor[] = [];
 
 export interface UpdateRoomResult {
   room: Room;
@@ -222,6 +224,20 @@ export function setConnections(
   const enriched = next.map((c) => enrichConnectionSides({ ...c, projectId }, roomsById));
   connections = connections.filter((c) => c.projectId !== projectId).concat(enriched);
   return getConnections(projectId);
+}
+
+export function getExteriorDoors(projectId: string): ExteriorDoor[] {
+  return exteriorDoors.filter((d) => d.projectId === projectId);
+}
+
+export function setExteriorDoors(
+  projectId: string,
+  next: ExteriorDoor[],
+): ExteriorDoor[] {
+  exteriorDoors = exteriorDoors
+    .filter((d) => d.projectId !== projectId)
+    .concat(next.map((d) => ({ ...d, projectId })));
+  return getExteriorDoors(projectId);
 }
 
 export function estimateRoomTotal(roomId: string): {

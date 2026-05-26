@@ -8,7 +8,7 @@ import {
   type WallOpening,
   type WallSide,
 } from '@/lib/homeLayout';
-import type { Room, RoomConnection } from '@/types';
+import type { ExteriorDoor, Room, RoomConnection } from '@/types';
 
 const WALL_THICKNESS = 0.06;
 const DOOR_HEIGHT_FT = 6.7;
@@ -17,11 +17,12 @@ export function buildWallPlans(
   room: Room,
   projectRooms: Room[],
   connections: RoomConnection[],
+  exteriorDoors: ExteriorDoor[] = [],
 ): RoomWallPlan[] {
-  if (projectRooms.length === 0 || connections.length === 0) {
+  if (projectRooms.length === 0) {
     return defaultWallPlans(room);
   }
-  return planRoomWalls(room, projectRooms, connections);
+  return planRoomWalls(room, projectRooms, connections, exteriorDoors);
 }
 
 function defaultWallPlans(room: Room): RoomWallPlan[] {
@@ -84,7 +85,9 @@ function WallSideGroup({
   wallOpacity: number;
 }) {
   const segments = solidWallSegments(plan);
-  const doorOpenings = plan.openings.filter((o) => o.kind === 'door');
+  const doorOpenings = plan.openings.filter(
+    (o) => o.kind === 'door' || o.kind === 'exterior-door',
+  );
   const headerHeight = Math.max(0, room.heightFt - DOOR_HEIGHT_FT);
 
   return (
@@ -128,7 +131,7 @@ function WallSideGroup({
       {showConnectionMarkers &&
         plan.openings.map((op) => (
           <ConnectionMarker
-            key={`${side}-${op.connectedRoomId}-${op.start}`}
+            key={`${side}-${op.kind}-${op.connectedRoomId ?? 'ext'}-${op.start}`}
             side={side}
             room={room}
             opening={op}
@@ -201,6 +204,11 @@ function ConnectionMarker({
   const [wx, wy, wz] = openingWorldPosition(side, room, midLocal);
   const labelY = Math.min(room.heightFt * 0.55, 5);
   const isOpen = opening.kind === 'open';
+  const isExterior = opening.kind === 'exterior-door';
+  const labelName = isExterior ? 'Outside' : (opening.connectedRoomName ?? 'Room');
+  const borderColor = isExterior ? '#d97706' : isOpen ? '#5c7a6a' : '#a78bfa';
+  const bgColor = isExterior ? '#fffbeb' : isOpen ? '#eef4f0' : '#f5f3ff';
+  const textColor = isExterior ? '#92400e' : isOpen ? '#3f5b4d' : '#5b21b6';
 
   // Floor strip at the opening — visible even when walls are hidden
   const floorSize = floorStripSize(side, width);
@@ -211,7 +219,7 @@ function ConnectionMarker({
       <mesh position={floorPos} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
         <planeGeometry args={floorSize} />
         <meshBasicMaterial
-          color={isOpen ? '#5c7a6a' : '#a78bfa'}
+          color={isExterior ? '#d97706' : isOpen ? '#5c7a6a' : '#a78bfa'}
           transparent
           opacity={0.35}
         />
@@ -227,13 +235,13 @@ function ConnectionMarker({
         <div
           className="whitespace-nowrap rounded-lg border px-2 py-1 text-[10px] font-semibold shadow-md"
           style={{
-            borderColor: isOpen ? '#5c7a6a' : '#a78bfa',
-            background: isOpen ? '#eef4f0' : '#f5f3ff',
-            color: isOpen ? '#3f5b4d' : '#5b21b6',
+            borderColor,
+            background: bgColor,
+            color: textColor,
           }}
         >
-          <span className="mr-1">{isOpen ? '↔' : '🚪'}</span>
-          {sideLabel(side)} · {opening.connectedRoomName}
+          <span className="mr-1">{isOpen ? '↔' : isExterior ? '🚪' : '🚪'}</span>
+          {sideLabel(side)} · {labelName}
         </div>
       </Html>
     </group>

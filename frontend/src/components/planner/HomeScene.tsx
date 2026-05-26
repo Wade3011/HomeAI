@@ -4,7 +4,7 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { Grid, OrbitControls } from '@react-three/drei';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
-import type { CatalogItem, Placement, Room, RoomConnection } from '@/types';
+import type { CatalogItem, ExteriorDoor, Placement, Room, RoomConnection } from '@/types';
 import { resolvePlacementItem } from '@/lib/placementItem';
 import { resolvePlacementY } from '@/lib/placementHeight';
 import { CustomItemMesh } from '@/components/planner/CustomItemMesh';
@@ -21,6 +21,7 @@ import {
 export function HomeScene({
   rooms,
   connections,
+  exteriorDoors = [],
   placementsByRoomId,
   catalogById,
   focusRoomId,
@@ -28,6 +29,7 @@ export function HomeScene({
 }: {
   rooms: Room[];
   connections: RoomConnection[];
+  exteriorDoors?: ExteriorDoor[];
   placementsByRoomId: Record<string, Placement[]>;
   catalogById: Record<string, CatalogItem>;
   focusRoomId: string | null;
@@ -78,7 +80,7 @@ export function HomeScene({
 
         {rooms.map((room) => {
           const focused = focusRoomId === null || focusRoomId === room.roomId;
-          const wallPlans = planRoomWalls(room, rooms, connections);
+          const wallPlans = planRoomWalls(room, rooms, connections, exteriorDoors);
           const placements = placementsByRoomId[room.roomId] ?? [];
           return (
             <RoomVolume

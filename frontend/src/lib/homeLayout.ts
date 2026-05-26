@@ -1,4 +1,4 @@
-import type { Room, RoomConnection, RoomWallSide } from '@/types';
+import type { ExteriorDoor, Room, RoomConnection, RoomWallSide } from '@/types';
 
 export type WallSide = RoomWallSide;
 
@@ -122,13 +122,15 @@ export function sharedEdge(a: RoomRect, b: RoomRect): SharedEdge | null {
   return null;
 }
 
+export type WallOpeningKind = RoomConnection['kind'] | 'exterior-door';
+
 export interface WallOpening {
   /** Start coordinate along the wall, in wall-local feet */
   start: number;
   end: number;
-  kind: RoomConnection['kind'];
-  connectedRoomId: string;
-  connectedRoomName: string;
+  kind: WallOpeningKind;
+  connectedRoomId?: string;
+  connectedRoomName?: string;
 }
 
 export interface RoomWallPlan {
@@ -139,7 +141,87 @@ export interface RoomWallPlan {
   openings: WallOpening[];
 }
 
-const DOOR_WIDTH_FT = 3;
+export const DOOR_WIDTH_FT = 3;
+
+export interface FloorPlanOverview {
+  bounds: ProjectBounds;
+  totalSqFt: number;
+  roomCount: number;
+  footprintWidthFt: number;
+  footprintDepthFt: number;
+}
+
+/** Sum of room footprints and combined bounding-box dimensions. */
+export function computeFloorPlanOverview(rooms: Room[]): FloorPlanOverview {
+  const bounds = computeProjectBounds(rooms);
+  const totalSqFt = rooms.reduce((sum, r) => sum + r.widthFt * r.depthFt, 0);
+  return {
+    bounds,
+    totalSqFt: Math.round(totalSqFt),
+    roomCount: rooms.length,
+    footprintWidthFt: bounds.widthFt,
+    footprintDepthFt: bounds.depthFt,
+  };
+}
+
+/** True if another room shares this wall side with `room`. */
+export function roomHasNeighborOnSide(
+  room: Room,
+  rooms: Room[],
+  side: WallSide,
+): boolean {
+  const rect = roomRect(room);
+  for (const other of rooms) {
+    if (other.roomId === room.roomId) continue;
+    const edge = sharedEdge(rect, roomRect(other));
+    if (edge?.side === side) return true;
+  }
+  return false;
+}
+
+/** Pick an exterior wall from a click inside or near a room (floor-plan feet). */
+export function pickExteriorWallAtPoint(
+  room: Room,
+  clickXFt: number,
+  clickZFt: number,
+  rooms: Room[],
+  edgeToleranceFt = 1.25,
+): { side: WallSide; offsetFt: number } | null {
+  const lx = room.layoutX ?? 0;
+  const lz = room.layoutZ ?? 0;
+  const relX = clickXFt - lx;
+  const relZ = clickZFt - lz;
+
+  if (relX < -edgeToleranceFt || relZ < -edgeToleranceFt) return null;
+  if (relX > room.widthFt + edgeToleranceFt || relZ > room.depthFt + edgeToleranceFt) {
+    return null;
+  }
+
+  type Candidate = { side: WallSide; offsetFt: number; dist: number };
+  const candidates: Candidate[] = [];
+
+  if (relZ <= edgeToleranceFt && !roomHasNeighborOnSide(room, rooms, 'back')) {
+    candidates.push({ side: 'back', offsetFt: relX, dist: relZ });
+  }
+  if (relZ >= room.depthFt - edgeToleranceFt && !roomHasNeighborOnSide(room, rooms, 'front')) {
+    candidates.push({ side: 'front', offsetFt: relX, dist: room.depthFt - relZ });
+  }
+  if (relX <= edgeToleranceFt && !roomHasNeighborOnSide(room, rooms, 'left')) {
+    candidates.push({ side: 'left', offsetFt: relZ, dist: relX });
+  }
+  if (relX >= room.widthFt - edgeToleranceFt && !roomHasNeighborOnSide(room, rooms, 'right')) {
+    candidates.push({ side: 'right', offsetFt: relZ, dist: room.widthFt - relX });
+  }
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => a.dist - b.dist);
+  const pick = candidates[0];
+  const wallLen =
+    pick.side === 'back' || pick.side === 'front' ? room.widthFt : room.depthFt;
+  const inset = DOOR_WIDTH_FT / 2 + 0.25;
+  const offsetFt = Math.max(inset, Math.min(wallLen - inset, pick.offsetFt));
+  return { side: pick.side, offsetFt };
+}
 
 /**
  * Build wall plans for a room — each wall lists its openings (full-wall for open
@@ -149,6 +231,7 @@ export function planRoomWalls(
   room: Room,
   rooms: Room[],
   connections: RoomConnection[],
+  exteriorDoors: ExteriorDoor[] = [],
 ): RoomWallPlan[] {
   const a = roomRect(room);
   const byId: Record<string, Room> = {};
@@ -212,6 +295,21 @@ export function planRoomWalls(
         });
       }
     }
+  }
+
+  for (const door of exteriorDoors) {
+    if (door.roomId !== room.roomId) continue;
+    const wall = walls.find((w) => w.side === door.side);
+    if (!wall) continue;
+    const width = door.widthFt ?? DOOR_WIDTH_FT;
+    const half = width / 2;
+    const center = Math.max(half, Math.min(wall.length - half, door.offsetFt));
+    wall.openings.push({
+      start: center - half,
+      end: center + half,
+      kind: 'exterior-door',
+      connectedRoomName: 'Outside',
+    });
   }
 
   // Merge & sort openings
