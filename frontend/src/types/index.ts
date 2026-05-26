@@ -1,6 +1,20 @@
 export type UnitSystem = 'imperial' | 'metric';
 
-export type RoomType = 'kitchen' | 'bathroom' | 'bedroom' | 'living' | 'hallway' | 'other';
+export type RoomType =
+  | 'kitchen'
+  | 'bathroom'
+  | 'bedroom'
+  | 'master-bedroom'
+  | 'living'
+  | 'dining'
+  | 'hallway'
+  | 'office'
+  | 'pantry'
+  | 'utility'
+  | 'garage'
+  | 'porch'
+  | 'closet'
+  | 'other';
 
 export type CustomItemShape =
   | 'box'

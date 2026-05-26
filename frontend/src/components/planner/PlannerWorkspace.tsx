@@ -3,8 +3,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  deleteRoom,
   fetchCatalog,
   fetchCatalogByIds,
   fetchConnections,
@@ -39,6 +41,7 @@ import {
 import {
   canPlaceItemAt,
   isCountertopItem,
+  placementFailureReason,
   resolvePlacementY,
 } from '@/lib/placementHeight';
 import { resolvePlacementItem } from '@/lib/placementItem';
@@ -75,12 +78,15 @@ const PlannerScene = dynamic(
 
 function PlannerInner({
   projectId,
+  roomId,
   initialRoom,
 }: {
   projectId: string;
+  roomId: string;
   initialRoom: Room;
 }) {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [room, setRoom] = useState(initialRoom);
 
   useEffect(() => {
@@ -186,6 +192,27 @@ function PlannerInner({
     },
   });
 
+  const deleteRoomMutation = useMutation({
+    mutationFn: () => deleteRoom(roomId),
+    onSuccess: () => {
+      queryClient.setQueryData<Room[] | undefined>(['rooms', projectId], (prev) =>
+        prev?.filter((r) => r.roomId !== roomId),
+      );
+      queryClient.invalidateQueries({ queryKey: ['connections', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['exterior-doors', projectId] });
+      queryClient.removeQueries({ queryKey: ['room', roomId] });
+      queryClient.removeQueries({ queryKey: ['placements', roomId] });
+      router.push(`/projects/${projectId}`);
+    },
+  });
+
+  const confirmDeleteRoom = () => {
+    const ok = window.confirm(
+      `Delete "${room.name}"? Its layout, connections, and exterior doors will be removed. This cannot be undone.`,
+    );
+    if (ok) deleteRoomMutation.mutate();
+  };
+
   const catalogById = useMemo(
     () =>
       catalog.reduce<Record<string, CatalogItem>>((acc, item) => {
@@ -196,9 +223,11 @@ function PlannerInner({
   );
 
   const [placeRotationSteps, setPlaceRotationSteps] = useState(0);
+  const [placeError, setPlaceError] = useState<string | null>(null);
 
   useEffect(() => {
     setPlaceRotationSteps(0);
+    setPlaceError(null);
   }, [catalogDragItem?.itemId, customDragItem?.templateId]);
 
   useEffect(() => {
@@ -444,6 +473,9 @@ function PlannerInner({
             heightFt={room.heightFt}
             isSaving={roomMutation.isPending}
             onApply={(dims) => roomMutation.mutate(dims)}
+            roomName={room.name}
+            onDelete={confirmDeleteRoom}
+            isDeleting={deleteRoomMutation.isPending}
           />
         </CollapsiblePanel>
         {roomPreset.catalogSections.length > 0 && (
@@ -520,6 +552,9 @@ function PlannerInner({
             </p>
             {placingActive && (
               <>
+                {placeError && (
+                  <p className="w-full text-xs font-medium text-red-700">{placeError}</p>
+                )}
                 <button
                   type="button"
                   onClick={() => setPlaceRotationSteps((s) => nextRotationSteps(s, 1))}
@@ -569,6 +604,7 @@ function PlannerInner({
               onSelectPlacement={selectPlacement}
               onPlaceAt={(x, z, rotationY) => {
                 if (!catalogDragItem) return false;
+                setPlaceError(null);
                 if (
                   !canPlaceItemAt(
                     catalogDragItem,
@@ -577,8 +613,20 @@ function PlannerInner({
                     rotationY,
                     placements,
                     catalogById,
+                    room,
                   )
                 ) {
+                  setPlaceError(
+                    placementFailureReason(
+                      catalogDragItem,
+                      x,
+                      z,
+                      rotationY,
+                      placements,
+                      catalogById,
+                      room,
+                    ) ?? 'Cannot place here.',
+                  );
                   return false;
                 }
                 const positionY = resolvePlacementY(
@@ -595,6 +643,7 @@ function PlannerInner({
                 setPlaceRotationSteps(0);
                 return true;
               }}
+              onPlaceFailed={setPlaceError}
               onPlaceCustomAt={(x, z, rotationY) => tryPlaceCustom(x, z, rotationY)}
               onMovePlacement={(id, x, z) => {
                 const p = placements.find((pl) => pl.placementId === id);
@@ -654,7 +703,7 @@ export function PlannerWorkspace({
 }) {
   return (
     <PlannerProvider roomId={roomId} initialPlacements={initialPlacements}>
-      <PlannerInner projectId={projectId} initialRoom={initialRoom} />
+      <PlannerInner projectId={projectId} roomId={roomId} initialRoom={initialRoom} />
     </PlannerProvider>
   );
 }

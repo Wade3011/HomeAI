@@ -1,10 +1,21 @@
 import { getCatalogItem, getCatalogItems } from '@/lib/catalog';
 import { computeConnectedLayoutPatches, enrichConnectionSides } from '@/lib/homeLayout';
+import {
+  buildConnectionsFromPreset,
+  buildExteriorDoorsFromPreset,
+  buildRoomsFromPreset,
+  getFloorPlanPreset,
+  type ProjectFromPresetResult,
+} from '@/lib/floorPlanPresets';
+import { KRAENZLEIN_7629_PRESET } from '@/data/floorPlanPresets/kraenzlein-7629';
 import type { ExteriorDoor, Placement, Project, Room, RoomConnection } from '@/types';
 import { ROOM_TYPE_PRESETS, normalizeRoomType } from '@/config/roomTypes';
 
 export const DEV_PROJECT_ID = 'dev-project-1';
 export const DEV_ROOM_ID = 'dev-room-kitchen';
+export const KRAENZLEIN_PROJECT_ID = 'kraenzlein-7629';
+export const KRAENZLEIN_PRESET_VERSION = KRAENZLEIN_7629_PRESET.version;
+export const KRAENZLEIN_KITCHEN_ROOM_ID = `room-kitchen-${KRAENZLEIN_PROJECT_ID.slice(-8)}`;
 
 const now = new Date().toISOString();
 
@@ -77,6 +88,83 @@ let connections: RoomConnection[] = [
 
 let exteriorDoors: ExteriorDoor[] = [];
 
+function applyPresetToStore(result: ProjectFromPresetResult): ProjectFromPresetResult {
+  projects = [...projects, result.project];
+  rooms = [...rooms, ...result.rooms];
+  connections = [...connections, ...result.connections];
+  exteriorDoors = [...exteriorDoors, ...result.exteriorDoors];
+  return result;
+}
+
+function buildPresetProject(
+  presetId: string,
+  projectId: string,
+  projectName: string,
+): ProjectFromPresetResult | undefined {
+  const preset = getFloorPlanPreset(presetId);
+  if (!preset) return undefined;
+  const t = new Date().toISOString();
+  const project: Project = {
+    projectId,
+    ownerUserId: 'dev-user',
+    name: projectName,
+    unitSystem: 'imperial',
+    createdAt: t,
+    updatedAt: t,
+  };
+  const presetRooms = buildRoomsFromPreset(projectId, preset);
+  const roomsById = new Map(presetRooms.map((r) => [r.roomId, r]));
+  const presetConnections = buildConnectionsFromPreset(projectId, preset).map((c) =>
+    enrichConnectionSides(c, roomsById),
+  );
+  return {
+    project,
+    rooms: presetRooms,
+    connections: presetConnections,
+    exteriorDoors: buildExteriorDoorsFromPreset(projectId, preset),
+  };
+}
+
+function wipeProject(projectId: string): void {
+  const roomIds = new Set(
+    rooms.filter((r) => r.projectId === projectId).map((r) => r.roomId),
+  );
+  projects = projects.filter((p) => p.projectId !== projectId);
+  rooms = rooms.filter((r) => r.projectId !== projectId);
+  connections = connections.filter((c) => c.projectId !== projectId);
+  exteriorDoors = exteriorDoors.filter((d) => d.projectId !== projectId);
+  placements = placements.filter((p) => !roomIds.has(p.roomId));
+}
+
+function seedKraenzleinProject(): void {
+  wipeProject(KRAENZLEIN_PROJECT_ID);
+  applyPresetToStore(
+    buildPresetProject(
+      'kraenzlein-7629',
+      KRAENZLEIN_PROJECT_ID,
+      '7629 Kraenzlein Rd',
+    )!,
+  );
+}
+
+let kraenzleinAppliedVersion = -1;
+if (kraenzleinAppliedVersion !== KRAENZLEIN_PRESET_VERSION) {
+  seedKraenzleinProject();
+  kraenzleinAppliedVersion = KRAENZLEIN_PRESET_VERSION;
+}
+
+export function createProjectFromPreset(
+  presetId: string,
+  name?: string,
+): ProjectFromPresetResult | undefined {
+  const preset = getFloorPlanPreset(presetId);
+  if (!preset) return undefined;
+  const projectId = `proj-${crypto.randomUUID()}`;
+  const result = buildPresetProject(presetId, projectId, name ?? preset.name);
+  if (!result) return undefined;
+  return applyPresetToStore(result);
+}
+
 export interface UpdateRoomResult {
   room: Room;
   /** Rooms whose floor-plan position shifted to preserve connections. */
@@ -111,6 +199,28 @@ export function getProject(projectId: string): Project | undefined {
   return projects.find((p) => p.projectId === projectId);
 }
 
+/**
+ * Self-heal projects orphaned by a dev-server restart (which wipes in-memory state).
+ * If a request comes in for a `proj-*` ID we don't know about, materialize an empty
+ * project so the user's browser URL keeps working instead of getting 404s.
+ */
+export function ensureProject(projectId: string): Project | undefined {
+  const existing = projects.find((p) => p.projectId === projectId);
+  if (existing) return existing;
+  if (!projectId.startsWith('proj-')) return undefined;
+  const t = new Date().toISOString();
+  const project: Project = {
+    projectId,
+    ownerUserId: 'dev-user',
+    name: 'My Home',
+    unitSystem: 'imperial',
+    createdAt: t,
+    updatedAt: t,
+  };
+  projects = [...projects, project];
+  return project;
+}
+
 export function getRoomsForProject(projectId: string): Room[] {
   return rooms.filter((r) => r.projectId === projectId);
 }
@@ -143,7 +253,7 @@ export function getRoom(roomId: string): Room | undefined {
 export function updateRoom(
   roomId: string,
   patch: Partial<
-    Pick<Room, 'name' | 'widthFt' | 'depthFt' | 'heightFt' | 'layoutX' | 'layoutZ'>
+    Pick<Room, 'name' | 'type' | 'widthFt' | 'depthFt' | 'heightFt' | 'layoutX' | 'layoutZ'>
   >,
 ): UpdateRoomResult | undefined {
   const idx = rooms.findIndex((r) => r.roomId === roomId);
@@ -152,6 +262,7 @@ export function updateRoom(
   const updated: Room = {
     ...previous,
     ...patch,
+    ...(patch.type !== undefined ? { type: normalizeRoomType(String(patch.type)) } : {}),
     updatedAt: new Date().toISOString(),
   };
 
@@ -190,6 +301,21 @@ export function updateRoom(
     .filter((r): r is Room => r !== undefined);
 
   return { room: updated, adjustedRooms };
+}
+
+export function deleteRoom(roomId: string): { projectId: string } | undefined {
+  const room = getRoom(roomId);
+  if (!room) return undefined;
+
+  const { projectId } = room;
+  rooms = rooms.filter((r) => r.roomId !== roomId);
+  placements = placements.filter((p) => p.roomId !== roomId);
+  connections = connections.filter(
+    (c) => c.roomAId !== roomId && c.roomBId !== roomId,
+  );
+  exteriorDoors = exteriorDoors.filter((d) => d.roomId !== roomId);
+
+  return { projectId };
 }
 
 const LEGACY_DEMO_PLACEMENT_IDS = new Set(['place-1', 'place-2', 'place-3']);

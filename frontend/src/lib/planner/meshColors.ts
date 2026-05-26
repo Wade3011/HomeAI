@@ -4,24 +4,24 @@ import { catalogSectionForItem, isShowerItem, isToiletItem } from '@/config/cata
 /** Cohesive 3D palette — warm wood cabinets, soft fixtures, sage selection. */
 export function meshColor(item: CatalogItem, selected: boolean): string {
   if (selected) return '#5c7a6a';
-  if (isToiletItem(item)) return '#f5f3f0';
-  if (isShowerItem(item)) return '#c5d4dc';
+  if (isToiletItem(item)) return '#f2eee8';
+  if (isShowerItem(item)) return '#b8ccd6';
   const section = catalogSectionForItem(item);
   switch (section) {
     case 'wall-cabinets':
-      return '#9fb3c8';
+      return '#a8bcc8';
     case 'countertops':
-      return '#d6d0c4';
+      return '#c8c0b4';
     case 'appliances':
-      return '#b0b8c0';
+      return '#aeb4bc';
     case 'vanities':
-      return '#b8a99a';
+      return '#b0a090';
     case 'toilets':
-      return '#f5f3f0';
+      return '#f2eee8';
     case 'showers':
-      return '#c5d4dc';
+      return '#b8ccd6';
     default:
-      return '#c4b5a0';
+      return '#b8a88e';
   }
 }
 

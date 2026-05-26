@@ -1,13 +1,14 @@
 'use client';
 
 import { Canvas, useThree } from '@react-three/fiber';
-import { Grid, OrbitControls } from '@react-three/drei';
+import { Grid, OrbitControls, Environment } from '@react-three/drei';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import type { CatalogItem, ExteriorDoor, Placement, Room, RoomConnection } from '@/types';
 import { resolvePlacementItem } from '@/lib/placementItem';
 import { resolvePlacementY } from '@/lib/placementHeight';
 import { CustomItemMesh } from '@/components/planner/CustomItemMesh';
+import { CatalogItemMesh } from '@/components/planner/CatalogItemMesh';
 import { meshColorForResolved } from '@/lib/planner/meshColors';
 import { WallToggleButton } from '@/components/planner/WallToggleButton';
 import { RoomConnectionWalls } from '@/components/planner/RoomConnectionWalls';
@@ -17,6 +18,7 @@ import {
   planRoomWalls,
   type RoomWallPlan,
 } from '@/lib/homeLayout';
+import { preloadCatalogModels } from '@/lib/planner/catalogMeshModels';
 
 export function HomeScene({
   rooms,
@@ -37,6 +39,10 @@ export function HomeScene({
 }) {
   const [showWalls, setShowWalls] = useState(true);
   const bounds = useMemo(() => computeProjectBounds(rooms), [rooms]);
+
+  useEffect(() => {
+    preloadCatalogModels();
+  }, []);
 
   const cameraPosition: [number, number, number] = useMemo(() => {
     const diag = Math.hypot(bounds.widthFt, bounds.depthFt);
@@ -63,6 +69,7 @@ export function HomeScene({
         performance={{ min: 0.5 }}
       >
         <color attach="background" args={['#ebe8e3']} />
+        <Environment preset="apartment" environmentIntensity={0.45} />
         <ambientLight intensity={0.6} />
         <directionalLight position={[20, 28, 14]} intensity={1.1} castShadow={false} />
         <directionalLight position={[-12, 18, -8]} intensity={0.3} />
@@ -110,7 +117,7 @@ export function HomeScene({
           dampingFactor={0.12}
           maxPolarAngle={Math.PI / 2.05}
           minDistance={4}
-          maxDistance={Math.max(bounds.widthFt, bounds.depthFt) * 3 + 10}
+          maxDistance={Math.max(bounds.widthFt, bounds.depthFt) * 6 + 20}
         />
       </Canvas>
     </div>
@@ -243,6 +250,7 @@ function RoomVolume({
       {placements.map((p) => (
         <PlacementBlock
           key={p.placementId}
+          room={room}
           placement={p}
           placements={placements}
           catalogById={catalogById}
@@ -278,12 +286,14 @@ function RoomLabel({
 }
 
 function PlacementBlock({
+  room,
   placement,
   placements,
   catalogById,
   opacity,
   transparent,
 }: {
+  room: Room;
   placement: Placement;
   placements: Placement[];
   catalogById: Record<string, CatalogItem>;
@@ -322,20 +332,19 @@ function PlacementBlock({
           opacity={opacity}
           transparent={transparent}
         />
+      ) : resolved.catalogItem ? (
+        <CatalogItemMesh
+          item={resolved.catalogItem}
+          resolved={resolved}
+          selected={false}
+          pickable={false}
+          opacity={opacity}
+          transparent={transparent}
+          roomHeightFt={room.heightFt}
+        />
       ) : (
         <mesh raycast={() => null}>
-          {resolved.shape === 'round' ? (
-            <cylinderGeometry
-              args={[
-                Math.min(resolved.widthFt, resolved.depthFt) / 2,
-                Math.min(resolved.widthFt, resolved.depthFt) / 2,
-                resolved.heightFt,
-                24,
-              ]}
-            />
-          ) : (
-            <boxGeometry args={[resolved.widthFt, resolved.heightFt, resolved.depthFt]} />
-          )}
+          <boxGeometry args={[resolved.widthFt, resolved.heightFt, resolved.depthFt]} />
           <meshLambertMaterial
             color={meshColorForResolved(resolved, false)}
             transparent={transparent}

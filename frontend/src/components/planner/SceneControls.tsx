@@ -137,7 +137,7 @@ export function SceneControls({
       minPolarAngle={0.12}
       maxPolarAngle={Math.PI / 2 - 0.04}
       minDistance={4}
-      maxDistance={Math.max(target[0], target[2]) * 4}
+      maxDistance={Math.max(target[0], target[2]) * 8}
       touches={placementMode ? { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.PAN } : DEFAULT_TOUCHES}
     />
   );

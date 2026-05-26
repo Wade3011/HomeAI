@@ -28,7 +28,7 @@ export default function ProjectDetailPage({
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-6 py-10">
+    <main className="mx-auto max-w-6xl px-6 py-10">
       <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div>
           <Link href="/projects" className="text-sm font-medium text-stone-500 hover:text-stone-700">

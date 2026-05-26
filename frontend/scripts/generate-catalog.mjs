@@ -783,7 +783,7 @@ for (const s of SHOWER_PRODUCTS) {
     category: 'shower',
     subcategory: s.subcategory,
     brand: s.brand,
-    brandId: s.id,
+    brandId: s.subcategory === 'walk-in' ? 'tile-materials-est' : s.id,
     name: s.name,
     widthIn: s.widthIn,
     depthIn: s.depthIn,

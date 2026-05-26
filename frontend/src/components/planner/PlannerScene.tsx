@@ -1,7 +1,7 @@
 'use client';
 
 import { Canvas } from '@react-three/fiber';
-import { Grid } from '@react-three/drei';
+import { Grid, Environment } from '@react-three/drei';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { endActiveDragSession } from '@/lib/planner/dragSession';
 import type { CatalogItem, CustomItemSpec, ExteriorDoor, Placement, Room, RoomConnection } from '@/types';
@@ -20,7 +20,7 @@ import {
   resolvePlacementPosition,
 } from '@/components/planner/placementCollision';
 import { CABINET_GRID_FT, clampPlacementOrigin, snapToGrid } from '@/components/planner/plannerUtils';
-import { isBaseCabinetItem, isCountertopItem } from '@/lib/placementHeight';
+import { isBaseCabinetItem, isCountertopItem, isShowerItem, isToiletItem, placementFailureReason } from '@/lib/placementHeight';
 import { resolvePlacementItem } from '@/lib/placementItem';
 import { normalizeCustomItemSpec, sectionalBoundsFt } from '@/lib/sectionalGeometry';
 import { BaseCabinetHighlights } from '@/components/planner/BaseCabinetHighlights';
@@ -33,6 +33,7 @@ import {
   SelectedPlacementDimensions,
 } from '@/components/planner/SceneDimensions';
 import { WallToggleButton } from '@/components/planner/WallToggleButton';
+import { preloadCatalogModels } from '@/lib/planner/catalogMeshModels';
 
 const INCHES_PER_FOOT = 12;
 
@@ -46,6 +47,7 @@ export function PlannerScene({
   customItemForPlace = null,
   placeRotationSteps = 0,
   onPlaceAt,
+  onPlaceFailed,
   onPlaceCustomAt,
   onMovePlacement,
   onRotatePlacement,
@@ -64,6 +66,7 @@ export function PlannerScene({
   selectedPlacementId: string | null;
   onSelectPlacement: (id: string | null) => void;
   onPlaceAt: (x: number, z: number, rotationY: number) => boolean;
+  onPlaceFailed?: (message: string) => void;
   onPlaceCustomAt: (x: number, z: number, rotationY: number) => boolean;
   onMovePlacement: (id: string, x: number, z: number) => void;
   onRotatePlacement: (id: string) => boolean;
@@ -80,6 +83,10 @@ export function PlannerScene({
     isDraggingRef.current = value;
     setIsDragging(value);
   };
+
+  useEffect(() => {
+    preloadCatalogModels();
+  }, []);
 
   useEffect(() => {
     const resetDrag = () => {
@@ -152,6 +159,8 @@ export function PlannerScene({
 
     const isCabinet =
       isBaseCabinetItem(catalogItem) || isWallCabinet(catalogItem);
+    const isLargeFloorFixture =
+      isShowerItem(catalogItem) || isToiletItem(catalogItem);
 
     const resolved = isCountertopItem(catalogItem)
       ? resolveCountertopPosition({
@@ -178,9 +187,22 @@ export function PlannerScene({
           footprints,
           placingItem: catalogItem,
           catalogById,
-          nudgeFt: isCabinet ? 0 : 2,
+          nudgeFt: isCabinet ? 0 : isLargeFloorFixture ? 3 : 2,
         });
-    if (!resolved) return false;
+    if (!resolved) {
+      onPlaceFailed?.(
+        placementFailureReason(
+          catalogItem,
+          snapped.x,
+          snapped.z,
+          rotationY,
+          placements,
+          catalogById,
+          room,
+        ) ?? 'No clear floor space here. Try another spot or rotate the item.',
+      );
+      return false;
+    }
     return onPlaceAt(resolved.x, resolved.z, rotationY);
   };
 
@@ -257,6 +279,7 @@ export function PlannerScene({
         }}
       >
         <color attach="background" args={['#ebe8e3']} />
+        <Environment preset="apartment" environmentIntensity={0.45} />
         <ambientLight intensity={0.65} />
         <directionalLight position={[8, 14, 6]} intensity={1.1} />
         <BaseCabinetHighlights
@@ -310,6 +333,7 @@ export function PlannerScene({
               resolved={resolved}
               roomWidth={size.w}
               roomDepth={size.d}
+              roomHeight={size.h}
               footprints={footprints}
               catalogById={catalogById}
               placements={placements}

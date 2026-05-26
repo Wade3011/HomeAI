@@ -1,6 +1,7 @@
 'use client';
 
 import type { CustomItemSpec } from '@/types';
+import { CylinderPart, RoundedPart } from '@/components/planner/MeshPart';
 import { meshColorForResolved, meshEmissive } from '@/lib/planner/meshColors';
 import type { ResolvedPlacementItem } from '@/lib/placementItem';
 import { isSectionalShape, sectionalPartsCenteredFt } from '@/lib/sectionalGeometry';
@@ -23,21 +24,22 @@ export function CustomItemMesh({
   const height = resolved.heightFt;
   const color = meshColorForResolved(resolved, selected);
   const emissive = meshEmissive(selected);
-  const raycast = pickable ? undefined : (() => null);
 
   if (spec.shape === 'round') {
     const r = Math.min(resolved.widthFt, resolved.depthFt) / 2;
     return (
-      <mesh raycast={raycast}>
-        <cylinderGeometry args={[r, r, height, 24]} />
-        <meshLambertMaterial
-          color={color}
-          emissive={emissive.color}
-          emissiveIntensity={emissive.intensity}
-          transparent={transparent}
-          opacity={opacity}
-        />
-      </mesh>
+      <CylinderPart
+        radiusTop={r}
+        radiusBottom={r}
+        height={height}
+        color={color}
+        material="wood"
+        emissive={emissive.color}
+        emissiveIntensity={emissive.intensity}
+        transparent={transparent}
+        opacity={opacity}
+        pickable={pickable}
+      />
     );
   }
 
@@ -46,35 +48,39 @@ export function CustomItemMesh({
     return (
       <group>
         {parts.map((part, idx) => (
-          <mesh
+          <RoundedPart
             key={idx}
-            position={[part.cx, height / 2, part.cz]}
-            raycast={raycast}
-          >
-            <boxGeometry args={[part.widthFt, height, part.depthFt]} />
-            <meshLambertMaterial
-              color={color}
-              emissive={emissive.color}
-              emissiveIntensity={emissive.intensity}
-              transparent={transparent}
-              opacity={opacity}
-            />
-          </mesh>
+            w={part.widthFt}
+            h={height}
+            d={part.depthFt}
+            x={part.cx}
+            y={height / 2}
+            z={part.cz}
+            color={color}
+            material="wood"
+            emissive={emissive.color}
+            emissiveIntensity={emissive.intensity}
+            transparent={transparent}
+            opacity={opacity}
+            pickable={pickable}
+          />
         ))}
       </group>
     );
   }
 
   return (
-    <mesh raycast={raycast}>
-      <boxGeometry args={[resolved.widthFt, height, resolved.depthFt]} />
-      <meshLambertMaterial
-        color={color}
-        emissive={emissive.color}
-        emissiveIntensity={emissive.intensity}
-        transparent={transparent}
-        opacity={opacity}
-      />
-    </mesh>
+    <RoundedPart
+      w={resolved.widthFt}
+      h={height}
+      d={resolved.depthFt}
+      color={color}
+      material="wood"
+      emissive={emissive.color}
+      emissiveIntensity={emissive.intensity}
+      transparent={transparent}
+      opacity={opacity}
+      pickable={pickable}
+    />
   );
 }

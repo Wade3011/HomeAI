@@ -1,6 +1,9 @@
 import {
   createProject,
+  createProjectFromPreset,
   createRoom,
+  deleteRoom,
+  ensureProject,
   estimateRoomTotal,
   getCatalog,
   getCatalogItem,
@@ -72,12 +75,27 @@ export async function handleMockApi(
         return json(200, { projects: getProjects() });
       }
       if (method === 'POST' && parts.length === 1) {
+        const presetId = body.presetId != null ? String(body.presetId) : '';
+        if (presetId) {
+          const result = createProjectFromPreset(
+            presetId,
+            body.name != null ? String(body.name) : undefined,
+          );
+          if (!result) {
+            return json(404, { error: 'not_found', message: 'Floor plan preset not found' });
+          }
+          return json(201, {
+            project: result.project,
+            rooms: result.rooms,
+            presetId,
+          });
+        }
         const project = createProject(String(body.name ?? 'My Home'));
         return json(201, { project });
       }
       if (parts.length >= 2) {
         const projectId = parts[1];
-        const project = getProject(projectId);
+        const project = ensureProject(projectId) ?? getProject(projectId);
         if (!project) return json(404, { error: 'not_found', message: 'Project not found' });
 
         if (method === 'GET' && parts.length === 2) {
@@ -140,6 +158,7 @@ export async function handleMockApi(
       if (method === 'PUT') {
         const updated = updateRoomInStore(roomId, {
           name: body.name != null ? String(body.name) : room.name,
+          type: body.type != null ? String(body.type) : room.type,
           widthFt: body.widthFt != null ? Number(body.widthFt) : room.widthFt,
           depthFt: body.depthFt != null ? Number(body.depthFt) : room.depthFt,
           heightFt: body.heightFt != null ? Number(body.heightFt) : room.heightFt,
@@ -151,6 +170,11 @@ export async function handleMockApi(
           room: updated.room,
           adjustedRooms: updated.adjustedRooms,
         });
+      }
+      if (method === 'DELETE') {
+        const result = deleteRoom(roomId);
+        if (!result) return json(404, { error: 'not_found', message: 'Room not found' });
+        return json(200, { ok: true, projectId: result.projectId });
       }
     }
 

@@ -9,6 +9,7 @@ import { isWallCabinet } from '@/config/catalogCategories';
 import { isBaseCabinetItem } from '@/lib/placementHeight';
 import { meshColorForResolved, meshEmissive } from '@/lib/planner/meshColors';
 import { CustomItemMesh } from '@/components/planner/CustomItemMesh';
+import { CatalogItemMesh } from '@/components/planner/CatalogItemMesh';
 import { isCountertopItem, resolvePlacementY } from '@/lib/placementHeight';
 import { inferWallFromPlacement, type RoomWallId } from '@/lib/placementSnap';
 import {
@@ -38,6 +39,7 @@ function PlacementMeshInner({
   resolved,
   roomWidth,
   roomDepth,
+  roomHeight,
   footprints,
   catalogById,
   placements,
@@ -54,6 +56,7 @@ function PlacementMeshInner({
   resolved: ResolvedPlacementItem;
   roomWidth: number;
   roomDepth: number;
+  roomHeight: number;
   footprints: PlacementFootprint[];
   catalogById: Record<string, CatalogItem>;
   placements: Placement[];
@@ -70,6 +73,7 @@ function PlacementMeshInner({
   const width = resolved.widthFt;
   const depth = resolved.depthFt;
   const height = resolved.heightFt;
+  const pickFloorY = -height / 2 + 0.03;
   const groupRef = useRef<THREE.Group>(null);
   const { camera, gl, invalidate } = useThree();
   const controls = useThree((s) => s.controls) as unknown as OrbitLike | null;
@@ -390,20 +394,28 @@ function PlacementMeshInner({
             selected={selected}
             pickable={false}
           />
-          <mesh {...pointerProps} visible={false}>
-            <boxGeometry args={[width, height, depth]} />
+          <mesh {...pointerProps} visible={false} position={[0, pickFloorY, 0]}>
+            <boxGeometry args={[width, 0.06, depth]} />
+            <meshBasicMaterial transparent opacity={0} />
+          </mesh>
+        </>
+      ) : resolved.catalogItem ? (
+        <>
+          <CatalogItemMesh
+            item={resolved.catalogItem}
+            resolved={resolved}
+            selected={selected}
+            pickable={false}
+            roomHeightFt={roomHeight}
+          />
+          <mesh {...pointerProps} visible={false} position={[0, pickFloorY, 0]}>
+            <boxGeometry args={[width, 0.06, depth]} />
             <meshBasicMaterial transparent opacity={0} />
           </mesh>
         </>
       ) : (
         <mesh {...pointerProps}>
-          {resolved.shape === 'round' ? (
-            <cylinderGeometry
-              args={[Math.min(width, depth) / 2, Math.min(width, depth) / 2, height, 24]}
-            />
-          ) : (
-            <boxGeometry args={[width, height, depth]} />
-          )}
+          <boxGeometry args={[width, height, depth]} />
           <meshLambertMaterial
             color={meshColorForResolved(resolved, selected)}
             emissive={meshEmissive(selected).color}
@@ -437,6 +449,9 @@ export const PlacementMesh = memo(PlacementMeshInner, (prev, next) => {
   if (prev.resolved.shape !== next.resolved.shape) return false;
   if (prev.resolved.label !== next.resolved.label) return false;
   if (prev.resolved.catalogItem?.itemId !== next.resolved.catalogItem?.itemId) return false;
+  if (prev.roomWidth !== next.roomWidth) return false;
+  if (prev.roomDepth !== next.roomDepth) return false;
+  if (prev.roomHeight !== next.roomHeight) return false;
   if (prev.footprints !== next.footprints) return false;
   return true;
 });

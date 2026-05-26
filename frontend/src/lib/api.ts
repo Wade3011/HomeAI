@@ -56,15 +56,25 @@ export async function fetchProject(projectId: string): Promise<Project> {
   return data.project;
 }
 
-export async function createProject(name: string): Promise<Project> {
+export async function createProject(
+  name: string,
+  opts?: { presetId?: string },
+): Promise<Project> {
   const res = await fetch('/api/projects', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, presetId: opts?.presetId }),
   });
   const data = await parseJson<{ project: Project }>(res);
   return data.project;
+}
+
+export async function createProjectFromPreset(
+  presetId: string,
+  name?: string,
+): Promise<Project> {
+  return createProject(name ?? 'My Home', { presetId });
 }
 
 export async function fetchProjectRooms(projectId: string): Promise<Room[]> {
@@ -100,7 +110,7 @@ export interface UpdateRoomResult {
 
 export async function updateRoom(
   roomId: string,
-  patch: Partial<Pick<Room, 'name' | 'widthFt' | 'depthFt' | 'heightFt' | 'layoutX' | 'layoutZ'>>,
+  patch: Partial<Pick<Room, 'name' | 'type' | 'widthFt' | 'depthFt' | 'heightFt' | 'layoutX' | 'layoutZ'>>,
 ): Promise<UpdateRoomResult> {
   const res = await fetch(`/api/rooms/${roomId}`, {
     method: 'PUT',
@@ -110,6 +120,14 @@ export async function updateRoom(
   });
   const data = await parseJson<{ room: Room; adjustedRooms?: Room[] }>(res);
   return { room: data.room, adjustedRooms: data.adjustedRooms ?? [] };
+}
+
+export async function deleteRoom(roomId: string): Promise<{ projectId: string }> {
+  const res = await fetch(`/api/rooms/${roomId}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  return parseJson<{ projectId: string }>(res);
 }
 
 export async function fetchConnections(projectId: string): Promise<RoomConnection[]> {

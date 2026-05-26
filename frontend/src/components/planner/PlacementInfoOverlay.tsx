@@ -44,7 +44,7 @@ export function PlacementInfoOverlay({
       <div className="panel-header px-3 py-2 text-xs font-semibold">Room &amp; selection</div>
       <div className="px-3 py-2 text-xs text-stone-600">
         <p>
-          {formatFt(room.widthFt)} ft × {formatFt(room.depthFt)} ft × {formatFt(room.heightFt)} ft
+          {formatFt(room.widthFt)} × {formatFt(room.depthFt)} × {formatFt(room.heightFt)}
         </p>
 
         {placement && resolved && wallDistances ? (
@@ -69,7 +69,7 @@ export function PlacementInfoOverlay({
                   <span className="block text-[10px] font-medium uppercase text-stone-500">
                     {side}
                   </span>
-                  <span className="font-semibold text-[var(--sage-800)]">{formatFt(ft)} ft</span>
+                  <span className="font-semibold text-[var(--sage-800)]">{formatFt(ft)}</span>
                 </div>
               ))}
             </div>

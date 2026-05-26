@@ -75,6 +75,27 @@ export function boxesOverlap2d(
   return ax < bx + bw && ax + aw > bx && az < bz + bd && az + ad > bz;
 }
 
+/** True when the oriented footprint fits entirely inside the room floor. */
+export function footprintFitsRoom(
+  x: number,
+  z: number,
+  widthFt: number,
+  depthFt: number,
+  rotationY: number,
+  roomWidthFt: number,
+  roomDepthFt: number,
+): boolean {
+  const { widthFt: w, depthFt: d } = orientedDimensions(widthFt, depthFt, rotationY);
+  if (w > roomWidthFt + 1e-6 || d > roomDepthFt + 1e-6) return false;
+  const c = clampPlacementOrigin(x, z, w, d, roomWidthFt, roomDepthFt);
+  return (
+    c.x >= -1e-6 &&
+    c.z >= -1e-6 &&
+    c.x + w <= roomWidthFt + 1e-6 &&
+    c.z + d <= roomDepthFt + 1e-6
+  );
+}
+
 function shouldCollide(
   placingItem: CatalogItem | undefined,
   otherItem: CatalogItem | undefined,
@@ -193,6 +214,19 @@ export function resolvePlacementPosition({
       roomWidthFt,
       roomDepthFt,
     );
+    if (
+      !footprintFitsRoom(
+        c.x,
+        c.z,
+        widthFt,
+        depthFt,
+        rotationY,
+        roomWidthFt,
+        roomDepthFt,
+      )
+    ) {
+      return null;
+    }
     if (
       !overlapsAny(
         c.x,

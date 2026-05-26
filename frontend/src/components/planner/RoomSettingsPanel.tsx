@@ -7,10 +7,10 @@ import {
   parseFeetInchesInput,
 } from '@/lib/imperialDimensions';
 
-const LIMITS = {
-  width: { minFt: 6, maxFt: 60, label: 'Width' },
-  depth: { minFt: 6, maxFt: 60, label: 'Depth' },
-  height: { minFt: 7, maxFt: 20, label: 'Height' },
+const DIMENSION_LABELS = {
+  width: 'Width',
+  depth: 'Depth',
+  height: 'Height',
 } as const;
 
 export function RoomSettingsPanel({
@@ -19,12 +19,18 @@ export function RoomSettingsPanel({
   heightFt,
   onApply,
   isSaving,
+  onDelete,
+  isDeleting,
+  roomName,
 }: {
   widthFt: number;
   depthFt: number;
   heightFt: number;
   onApply: (dims: { widthFt: number; depthFt: number; heightFt: number }) => void;
   isSaving?: boolean;
+  onDelete?: () => void;
+  isDeleting?: boolean;
+  roomName?: string;
 }) {
   const [width, setWidth] = useState(() => feetToFeetInches(widthFt));
   const [depth, setDepth] = useState(() => feetToFeetInches(depthFt));
@@ -55,9 +61,8 @@ export function RoomSettingsPanel({
     ];
 
     for (const { key, value } of checks) {
-      const { minFt, maxFt, label } = LIMITS[key];
-      if (value < minFt || value > maxFt) {
-        setError(`${label} must be between ${minFt}' and ${maxFt}'.`);
+      if (value <= 0) {
+        setError(`${DIMENSION_LABELS[key]} must be greater than zero.`);
         return;
       }
     }
@@ -77,21 +82,21 @@ export function RoomSettingsPanel({
       </p>
       <div className="mt-3 space-y-3">
         <DimensionField
-          label={LIMITS.width.label}
+          label={DIMENSION_LABELS.width}
           feet={width.feet}
           inches={width.inches}
           onFeetChange={(feet) => setWidth((prev) => ({ ...prev, feet }))}
           onInchesChange={(inches) => setWidth((prev) => ({ ...prev, inches }))}
         />
         <DimensionField
-          label={LIMITS.depth.label}
+          label={DIMENSION_LABELS.depth}
           feet={depth.feet}
           inches={depth.inches}
           onFeetChange={(feet) => setDepth((prev) => ({ ...prev, feet }))}
           onInchesChange={(inches) => setDepth((prev) => ({ ...prev, inches }))}
         />
         <DimensionField
-          label={LIMITS.height.label}
+          label={DIMENSION_LABELS.height}
           feet={height.feet}
           inches={height.inches}
           onFeetChange={(feet) => setHeight((prev) => ({ ...prev, feet }))}
@@ -107,6 +112,16 @@ export function RoomSettingsPanel({
       >
         {isSaving ? 'Applying…' : 'Apply size'}
       </button>
+      {onDelete && (
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={isDeleting}
+          className="mt-3 w-full rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-600 transition hover:border-red-400 hover:bg-red-50 disabled:opacity-50"
+        >
+          {isDeleting ? 'Deleting…' : `Delete${roomName ? ` ${roomName}` : ' room'}`}
+        </button>
+      )}
     </div>
   );
 }
@@ -144,8 +159,8 @@ function DimensionField({
           <input
             type="number"
             min={0}
-            max={11.9}
-            step={0.5}
+            max={11.875}
+            step={0.125}
             value={inches}
             onChange={(e) => onInchesChange(Number(e.target.value))}
             className="input-modern"

@@ -4,13 +4,12 @@ import { Html } from '@react-three/drei';
 import {
   planRoomWalls,
   solidWallSegments,
+  WALL_THICKNESS_FT,
   type RoomWallPlan,
   type WallOpening,
   type WallSide,
 } from '@/lib/homeLayout';
 import type { ExteriorDoor, Room, RoomConnection } from '@/types';
-
-const WALL_THICKNESS = 0.06;
 const DOOR_HEIGHT_FT = 6.7;
 
 export function buildWallPlans(
@@ -163,22 +162,23 @@ function WallSegmentMesh({
   let position: [number, number, number] = [0, 0, 0];
   let size: [number, number, number] = [1, 1, 1];
 
+  const halfT = WALL_THICKNESS_FT / 2;
   switch (side) {
     case 'back':
-      position = [midLocal, yCenter, 0];
-      size = [lengthFt, heightFt, WALL_THICKNESS];
+      position = [midLocal, yCenter, -halfT];
+      size = [lengthFt, heightFt, WALL_THICKNESS_FT];
       break;
     case 'front':
-      position = [midLocal, yCenter, room.depthFt];
-      size = [lengthFt, heightFt, WALL_THICKNESS];
+      position = [midLocal, yCenter, room.depthFt + halfT];
+      size = [lengthFt, heightFt, WALL_THICKNESS_FT];
       break;
     case 'left':
-      position = [0, yCenter, midLocal];
-      size = [WALL_THICKNESS, heightFt, lengthFt];
+      position = [-halfT, yCenter, midLocal];
+      size = [WALL_THICKNESS_FT, heightFt, lengthFt];
       break;
     case 'right':
-      position = [room.widthFt, yCenter, midLocal];
-      size = [WALL_THICKNESS, heightFt, lengthFt];
+      position = [room.widthFt + halfT, yCenter, midLocal];
+      size = [WALL_THICKNESS_FT, heightFt, lengthFt];
       break;
   }
 
@@ -283,7 +283,7 @@ function floorStripPosition(
   room: Pick<Room, 'widthFt' | 'depthFt'>,
   midLocal: number,
 ): [number, number, number] {
-  const inset = WALL_THICKNESS / 2 + 0.02;
+  const inset = 0.02;
   switch (side) {
     case 'back':
       return [midLocal, 0.03, inset];

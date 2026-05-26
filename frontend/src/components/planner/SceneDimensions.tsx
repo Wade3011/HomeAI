@@ -5,12 +5,12 @@ import { useThree } from '@react-three/fiber';
 import { useEffect, useMemo } from 'react';
 import type { Placement, Room } from '@/types';
 import { orientedDimensions } from '@/components/planner/placementCollision';
+import { formatFeetInches } from '@/lib/imperialDimensions';
 
 const DIM_LINE = '#5c7a6a';
 
 export function formatFt(value: number) {
-  const rounded = Math.round(value * 10) / 10;
-  return Number.isInteger(rounded) ? `${rounded}` : rounded.toFixed(1);
+  return formatFeetInches(value);
 }
 
 function DimLabel({
@@ -73,8 +73,8 @@ export function RoomFloorDimensions({ room }: { room: Room }) {
         dashSize={0.4}
         gapSize={0.25}
       />
-      <DimLabel position={[w / 2, y, -0.45]} label={`${formatFt(w)} ft`} room />
-      <DimLabel position={[-0.45, y, d / 2]} label={`${formatFt(d)} ft`} room />
+      <DimLabel position={[w / 2, y, -0.45]} label={formatFt(w)} room />
+      <DimLabel position={[-0.45, y, d / 2]} label={formatFt(d)} room />
     </group>
   );
 }
@@ -128,10 +128,10 @@ export function SelectedPlacementDimensions({
       <Line points={[backStart, backEnd]} color={DIM_LINE} lineWidth={2} />
       <Line points={[frontStart, frontEnd]} color={DIM_LINE} lineWidth={2} />
 
-      <DimLabel position={mid(leftStart, leftEnd)} label={`${formatFt(left)} ft`} />
-      <DimLabel position={mid(rightStart, rightEnd)} label={`${formatFt(right)} ft`} />
-      <DimLabel position={mid(backStart, backEnd)} label={`${formatFt(back)} ft`} />
-      <DimLabel position={mid(frontStart, frontEnd)} label={`${formatFt(front)} ft`} />
+      <DimLabel position={mid(leftStart, leftEnd)} label={formatFt(left)} />
+      <DimLabel position={mid(rightStart, rightEnd)} label={formatFt(right)} />
+      <DimLabel position={mid(backStart, backEnd)} label={formatFt(back)} />
+      <DimLabel position={mid(frontStart, frontEnd)} label={formatFt(front)} />
     </group>
   );
 }

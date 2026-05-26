@@ -70,7 +70,17 @@ export function computeProjectBounds(rooms: Room[]): ProjectBounds {
   };
 }
 
-const EDGE_TOLERANCE_FT = 0.05;
+/** Stud-wall thickness in feet (6"). Walls render outside the room interior footprint. */
+export const WALL_THICKNESS_FT = 0.5;
+
+/** Min overlap along the shared wall direction for two rooms to count as adjacent. */
+const EDGE_OVERLAP_MIN_FT = 0.05;
+/**
+ * Max perpendicular gap between two parallel walls for them to count as
+ * sharing a wall. Equal to a stud-wall thickness so rooms snapped together
+ * (with the 6" gap that holds the wall) are recognised as adjacent.
+ */
+const EDGE_GAP_TOLERANCE_FT = WALL_THICKNESS_FT + 0.05;
 
 export interface SharedEdge {
   side: WallSide;
@@ -95,28 +105,28 @@ export function sharedEdge(a: RoomRect, b: RoomRect): SharedEdge | null {
   const bz2 = b.z + b.depthFt;
 
   // a's back wall (z = az1) touches b's front wall (z = bz2)
-  if (Math.abs(az1 - bz2) < EDGE_TOLERANCE_FT) {
+  if (Math.abs(az1 - bz2) < EDGE_GAP_TOLERANCE_FT) {
     const start = Math.max(ax1, bx1);
     const end = Math.min(ax2, bx2);
-    if (end - start > EDGE_TOLERANCE_FT) return { side: 'back', start, end };
+    if (end - start > EDGE_OVERLAP_MIN_FT) return { side: 'back', start, end };
   }
   // a's front wall (z = az2) touches b's back wall (z = bz1)
-  if (Math.abs(az2 - bz1) < EDGE_TOLERANCE_FT) {
+  if (Math.abs(az2 - bz1) < EDGE_GAP_TOLERANCE_FT) {
     const start = Math.max(ax1, bx1);
     const end = Math.min(ax2, bx2);
-    if (end - start > EDGE_TOLERANCE_FT) return { side: 'front', start, end };
+    if (end - start > EDGE_OVERLAP_MIN_FT) return { side: 'front', start, end };
   }
   // a's left wall (x = ax1) touches b's right wall (x = bx2)
-  if (Math.abs(ax1 - bx2) < EDGE_TOLERANCE_FT) {
+  if (Math.abs(ax1 - bx2) < EDGE_GAP_TOLERANCE_FT) {
     const start = Math.max(az1, bz1);
     const end = Math.min(az2, bz2);
-    if (end - start > EDGE_TOLERANCE_FT) return { side: 'left', start, end };
+    if (end - start > EDGE_OVERLAP_MIN_FT) return { side: 'left', start, end };
   }
   // a's right wall (x = ax2) touches b's left wall (x = bx1)
-  if (Math.abs(ax2 - bx1) < EDGE_TOLERANCE_FT) {
+  if (Math.abs(ax2 - bx1) < EDGE_GAP_TOLERANCE_FT) {
     const start = Math.max(az1, bz1);
     const end = Math.min(az2, bz2);
-    if (end - start > EDGE_TOLERANCE_FT) return { side: 'right', start, end };
+    if (end - start > EDGE_OVERLAP_MIN_FT) return { side: 'right', start, end };
   }
 
   return null;
@@ -439,14 +449,14 @@ function neighborLayoutForSide(
     const overlap =
       Math.min(myRect.x + myRect.widthFt, layoutX + neighbor.widthFt) -
       Math.max(myRect.x, layoutX);
-    if (overlap <= EDGE_TOLERANCE_FT) {
+    if (overlap <= EDGE_OVERLAP_MIN_FT) {
       layoutX = myRect.x;
     }
   } else {
     const overlap =
       Math.min(myRect.z + myRect.depthFt, layoutZ + neighbor.depthFt) -
       Math.max(myRect.z, layoutZ);
-    if (overlap <= EDGE_TOLERANCE_FT) {
+    if (overlap <= EDGE_OVERLAP_MIN_FT) {
       layoutZ = myRect.z;
     }
   }

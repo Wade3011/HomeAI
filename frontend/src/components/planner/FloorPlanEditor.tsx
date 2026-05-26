@@ -6,6 +6,7 @@ import clsx from 'clsx';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   createRoom,
+  deleteRoom,
   fetchConnections,
   fetchExteriorDoors,
   saveConnections,
@@ -16,6 +17,7 @@ import {
   ROOM_TYPE_PRESETS,
   ROOM_TYPES,
   normalizeRoomType,
+  roomPlanFill,
   roomTypePreset,
   type RoomTypePreset,
 } from '@/config/roomTypes';
@@ -28,6 +30,7 @@ import {
   roomRect,
   roomsAreAdjacent,
   sharedEdge,
+  WALL_THICKNESS_FT,
 } from '@/lib/homeLayout';
 import {
   findConnectedRoomGroups,
@@ -38,10 +41,29 @@ import {
   unionBoundarySegments,
 } from '@/lib/floorPlanGroups';
 import type { ExteriorDoor, Room, RoomConnection, RoomType, RoomWallSide } from '@/types';
-import { formatFeetInches, formatFeetInchesPair } from '@/lib/imperialDimensions';
+import { formatFeetInches, formatFeetInchesPair, snapLayoutFt } from '@/lib/imperialDimensions';
+import { FloorPlanRoomPanel } from '@/components/planner/FloorPlanRoomPanel';
+import {
+  findFreeRoomSlot,
+  roomToRect,
+  snapAndResolveRoomPosition,
+  type RoomRect,
+} from '@/lib/floorPlanSnap';
 
 const PLAN_SCALE = 8; // px per foot on floor plan canvas
 const PLAN_PAD_FT = 8;
+const WALL_COLOR = '#3f3a35';
+/**
+ * Stroke that visually represents wall thickness on the SVG plan.
+ * SVG strokes are centered on the path, so a stroke of 2 × wall thickness
+ * results in `wall thickness` painted outside the room footprint (the inside
+ * half is hidden under the floor fill painted on top).
+ *
+ * Rooms are placed with a `ROOM_GAP_FT` (= wall thickness) gap between them,
+ * so the outside halves of two adjacent rooms' wall strokes overlap perfectly
+ * inside the gap → one shared visible wall.
+ */
+const WALL_STROKE_PX = WALL_THICKNESS_FT * PLAN_SCALE * 2;
 
 type Mode = 'arrange' | 'connect' | 'exterior-doors';
 
@@ -57,6 +79,7 @@ export function FloorPlanEditor({
   const [mode, setMode] = useState<Mode>('arrange');
   const [connectPick, setConnectPick] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
 
   // Local layout overrides (room positions during drag). Committed to the
   // server only on pointerup so dragging stays smooth.
@@ -122,15 +145,23 @@ export function FloorPlanEditor({
   const addMutation = useMutation({
     mutationFn: async (type: RoomType) => {
       const preset = ROOM_TYPE_PRESETS[type];
-      const offset = rooms.length * 2;
+      const siblings: RoomRect[] = rooms.map((r) => roomToRect(r));
+      const seed = rooms.length * 2;
+      const { x: layoutX, z: layoutZ } = findFreeRoomSlot(
+        preset.widthFt,
+        preset.depthFt,
+        siblings,
+        seed,
+        seed,
+      );
       return createRoom(projectId, {
         type,
         name: nextRoomName(type, rooms),
         widthFt: preset.widthFt,
         depthFt: preset.depthFt,
         heightFt: preset.heightFt,
-        layoutX: offset,
-        layoutZ: offset,
+        layoutX,
+        layoutZ,
       });
     },
     onSuccess: () => {
@@ -206,9 +237,80 @@ export function FloorPlanEditor({
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (roomId: string) => deleteRoom(roomId),
+    onSuccess: (_result, roomId) => {
+      queryClient.setQueryData<Room[] | undefined>(['rooms', projectId], (prev) =>
+        prev?.filter((r) => r.roomId !== roomId),
+      );
+      queryClient.invalidateQueries({ queryKey: ['connections', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['exterior-doors', projectId] });
+      queryClient.removeQueries({ queryKey: ['room', roomId] });
+      queryClient.removeQueries({ queryKey: ['placements', roomId] });
+      setLayoutOverrides((prev) => {
+        const next = { ...prev };
+        delete next[roomId];
+        return next;
+      });
+      if (connectPick === roomId) setConnectPick(null);
+      if (draggingId === roomId) setDraggingId(null);
+      if (selectedRoomId === roomId) setSelectedRoomId(null);
+    },
+  });
+
+  const roomDetailsMutation = useMutation({
+    mutationFn: ({
+      roomId,
+      patch,
+    }: {
+      roomId: string;
+      patch: { name: string; type: RoomType };
+    }) => updateRoom(roomId, patch),
+    onSuccess: ({ room, adjustedRooms }) => {
+      const touched = new Map<string, Room>([[room.roomId, room]]);
+      for (const adjusted of adjustedRooms) {
+        touched.set(adjusted.roomId, adjusted);
+      }
+      patchRoomsInCache(touched);
+    },
+  });
+
+  const roomDimensionsMutation = useMutation({
+    mutationFn: ({
+      roomId,
+      dims,
+    }: {
+      roomId: string;
+      dims: { widthFt: number; depthFt: number; heightFt: number };
+    }) => updateRoom(roomId, dims),
+    onSuccess: ({ room, adjustedRooms }) => {
+      const touched = new Map<string, Room>([[room.roomId, room]]);
+      for (const adjusted of adjustedRooms) {
+        touched.set(adjusted.roomId, adjusted);
+      }
+      patchRoomsInCache(touched);
+    },
+  });
+
+  const selectedRoom = useMemo(
+    () => rooms.find((r) => r.roomId === selectedRoomId) ?? null,
+    [rooms, selectedRoomId],
+  );
+
+  const confirmDeleteRoom = (room: Room) => {
+    const ok = window.confirm(
+      `Delete "${room.name}"? Its layout, connections, and exterior doors will be removed. This cannot be undone.`,
+    );
+    if (ok) deleteMutation.mutate(room.roomId);
+  };
+
   // Reset connection picker when leaving connect mode
   useEffect(() => {
     if (mode !== 'connect') setConnectPick(null);
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode !== 'arrange') setSelectedRoomId(null);
   }, [mode]);
 
   const toggleExteriorDoor = (room: Room, clickXFt: number, clickZFt: number) => {
@@ -326,7 +428,7 @@ export function FloorPlanEditor({
           </div>
           <p className="text-xs text-stone-500">
             {mode === 'arrange'
-              ? 'Drag rooms to lay out your home. Use Flip on hallways to swap length and width.'
+              ? 'Click a room to edit it, or drag to reposition. Rooms snap edge-to-edge and cannot overlap.'
               : mode === 'connect'
                 ? connectPick
                   ? 'Click an adjacent room to toggle: open → door → none.'
@@ -353,7 +455,7 @@ export function FloorPlanEditor({
 
       {adding && (
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {ROOM_TYPES.filter((t) => t !== 'other').map((type) => (
+          {ROOM_TYPES.map((type) => (
             <AddRoomCard
               key={type}
               preset={ROOM_TYPE_PRESETS[type]}
@@ -364,17 +466,21 @@ export function FloorPlanEditor({
         </div>
       )}
 
-      <div
-        className="relative overflow-auto rounded-2xl border border-stone-200 bg-[#f5f3f0] shadow-inner"
-        style={{ maxHeight: 'min(70vh, 560px)' }}
-      >
-        <svg
-          width={canvasW}
-          height={canvasH}
-          className="block"
-          data-floor-plan-svg
-          style={{ minWidth: canvasW, minHeight: canvasH }}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+        <div
+          className="relative min-w-0 flex-1 overflow-auto rounded-2xl border border-stone-200 bg-[#f5f3f0] shadow-inner"
+          style={{ maxHeight: 'min(70vh, 560px)' }}
+          onPointerDown={() => {
+            if (mode === 'arrange') setSelectedRoomId(null);
+          }}
         >
+          <svg
+            width={canvasW}
+            height={canvasH}
+            className="block"
+            data-floor-plan-svg
+            style={{ minWidth: canvasW, minHeight: canvasH }}
+          >
           <defs>
             <pattern
               id="planGrid"
@@ -395,6 +501,27 @@ export function FloorPlanEditor({
           <g transform={planTransform}>
             <FootprintDimensionBox bounds={overview.bounds} />
 
+            {/* All wall strokes paint in one pass so touching rooms share a
+                single visible wall instead of stacking. Room floor fills are
+                painted afterwards in the room loop below, covering the inside
+                half of every stroke. */}
+            <g pointerEvents="none">
+              {displayRooms.map((room) =>
+                mergedGroupByRoomId.has(room.roomId) ? null : (
+                  <RoomWallRing
+                    key={`wall-${room.roomId}`}
+                    layoutX={room.layoutX ?? 0}
+                    layoutZ={room.layoutZ ?? 0}
+                    widthFt={room.widthFt}
+                    depthFt={room.depthFt}
+                  />
+                ),
+              )}
+              {mergedGroups.map((group) => (
+                <MergedGroupWalls key={`wall-group-${group.id}`} group={group} />
+              ))}
+            </g>
+
             {mergedGroups.map((group) => (
               <ConnectedRoomGroupBlock
                 key={group.id}
@@ -410,10 +537,14 @@ export function FloorPlanEditor({
                 mode={mode}
                 inMergedGroup={mergedGroupByRoomId.has(room.roomId)}
                 isDragging={draggingId === room.roomId}
+                isSelected={selectedRoomId === room.roomId}
                 isConnectPick={connectPick === room.roomId}
                 projectId={projectId}
                 planOriginX={planOriginX}
                 planOriginZ={planOriginZ}
+                siblings={displayRooms
+                  .filter((r) => r.roomId !== room.roomId)
+                  .map((r) => roomToRect(r))}
                 onConnect={onPickForConnect}
                 onExteriorDoor={toggleExteriorDoor}
                 onFlip={() => flipMutation.mutate(room)}
@@ -425,8 +556,17 @@ export function FloorPlanEditor({
                     [room.roomId]: { layoutX, layoutZ },
                   }))
                 }
-                onDragEnd={(layoutX, layoutZ) => {
+                onDragEnd={(layoutX, layoutZ, moved) => {
                   setDraggingId(null);
+                  if (!moved && mode === 'arrange') {
+                    setSelectedRoomId(room.roomId);
+                    setLayoutOverrides((prev) => {
+                      const next = { ...prev };
+                      delete next[room.roomId];
+                      return next;
+                    });
+                    return;
+                  }
                   const committed = rooms.find((r) => r.roomId === room.roomId);
                   const committedX = committed?.layoutX ?? 0;
                   const committedZ = committed?.layoutZ ?? 0;
@@ -510,6 +650,25 @@ export function FloorPlanEditor({
           })}
           </g>
         </svg>
+        </div>
+
+        {mode === 'arrange' && selectedRoom && (
+          <FloorPlanRoomPanel
+            room={selectedRoom}
+            projectId={projectId}
+            onClose={() => setSelectedRoomId(null)}
+            onSaveDetails={(patch) =>
+              roomDetailsMutation.mutate({ roomId: selectedRoom.roomId, patch })
+            }
+            onApplyDimensions={(dims) =>
+              roomDimensionsMutation.mutate({ roomId: selectedRoom.roomId, dims })
+            }
+            onDelete={() => confirmDeleteRoom(selectedRoom)}
+            isSavingDetails={roomDetailsMutation.isPending}
+            isSavingDimensions={roomDimensionsMutation.isPending}
+            isDeleting={deleteMutation.isPending}
+          />
+        )}
       </div>
 
       {exteriorDoors.length > 0 && (
@@ -591,10 +750,20 @@ export function FloorPlanEditor({
       <ul className="grid gap-2 sm:grid-cols-2">
         {rooms.map((room) => {
           const preset = roomTypePreset(room.type);
+          const isSelected = mode === 'arrange' && selectedRoomId === room.roomId;
           return (
             <li
               key={room.roomId}
-              className="flex items-center justify-between rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm"
+              className={clsx(
+                'flex items-center justify-between rounded-xl border px-3 py-2 text-sm transition',
+                isSelected
+                  ? 'border-[var(--sage-600)] bg-[var(--sage-50)] ring-1 ring-[var(--sage-600)]'
+                  : 'border-stone-200 bg-white',
+                mode === 'arrange' && 'cursor-pointer hover:border-stone-300',
+              )}
+              onClick={() => {
+                if (mode === 'arrange') setSelectedRoomId(room.roomId);
+              }}
             >
               <div>
                 <p className="font-semibold text-stone-800">{room.name}</p>
@@ -605,23 +774,41 @@ export function FloorPlanEditor({
                     : ' · custom blocks only'}
                 </p>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  disabled={flipMutation.isPending}
-                  onClick={() => flipMutation.mutate(room)}
-                  className="rounded-full border border-stone-200 px-2 py-0.5 text-[11px] font-semibold text-stone-600 hover:border-[var(--sage-600)] hover:text-[var(--sage-800)] disabled:opacity-50"
-                  title="Swap width and length"
-                >
-                  Flip ↻
-                </button>
-                <Link
-                  href={`/planner/${projectId}/${room.roomId}`}
-                  className="text-xs font-semibold text-[var(--sage-700)] hover:underline"
-                >
-                  Plan →
-                </Link>
-              </div>
+              {isSelected && (
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={flipMutation.isPending}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      flipMutation.mutate(room);
+                    }}
+                    className="rounded-full border border-stone-200 px-2 py-0.5 text-[11px] font-semibold text-stone-600 hover:border-[var(--sage-600)] hover:text-[var(--sage-800)] disabled:opacity-50"
+                    title="Swap width and length"
+                  >
+                    Flip ↻
+                  </button>
+                  <button
+                    type="button"
+                    disabled={deleteMutation.isPending}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      confirmDeleteRoom(room);
+                    }}
+                    className="rounded-full border border-red-200 px-2 py-0.5 text-[11px] font-semibold text-red-600 hover:border-red-400 hover:text-red-800 disabled:opacity-50"
+                    title="Delete room"
+                  >
+                    Delete
+                  </button>
+                  <Link
+                    href={`/planner/${projectId}/${room.roomId}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-xs font-semibold text-[var(--sage-700)] hover:underline"
+                  >
+                    Plan →
+                  </Link>
+                </div>
+              )}
             </li>
           );
         })}
@@ -688,6 +875,62 @@ function OverviewStat({ label, value }: { label: string; value: string }) {
   );
 }
 
+function RoomWallRing({
+  layoutX,
+  layoutZ,
+  widthFt,
+  depthFt,
+}: {
+  layoutX: number;
+  layoutZ: number;
+  widthFt: number;
+  depthFt: number;
+}) {
+  const x = layoutX * PLAN_SCALE;
+  const y = layoutZ * PLAN_SCALE;
+  const w = widthFt * PLAN_SCALE;
+  const h = depthFt * PLAN_SCALE;
+  return (
+    <rect
+      x={x}
+      y={y}
+      width={w}
+      height={h}
+      fill="none"
+      stroke={WALL_COLOR}
+      strokeWidth={WALL_STROKE_PX}
+    />
+  );
+}
+
+function MergedGroupWalls({
+  group,
+}: {
+  group: ReturnType<typeof findConnectedRoomGroups>[number];
+}) {
+  const rects = group.rooms.map(roomRect);
+  const boundary = unionBoundarySegments(rects);
+  return (
+    <g>
+      {boundary.map((seg, i) => {
+        const line = segmentToLine(seg, PLAN_SCALE);
+        return (
+          <line
+            key={`wall-${i}`}
+            x1={line.x1}
+            y1={line.y1}
+            x2={line.x2}
+            y2={line.y2}
+            stroke={WALL_COLOR}
+            strokeWidth={WALL_STROKE_PX}
+            strokeLinecap="square"
+          />
+        );
+      })}
+    </g>
+  );
+}
+
 function ConnectedRoomGroupBlock({
   group,
   connections,
@@ -720,7 +963,7 @@ function ConnectedRoomGroupBlock({
             x2={line.x2}
             y2={line.y2}
             stroke={GROUP_STROKE}
-            strokeWidth={2}
+            strokeWidth={1.25}
             strokeLinecap="square"
           />
         );
@@ -783,10 +1026,11 @@ function FootprintDimensionBox({
 }: {
   bounds: ReturnType<typeof computeFloorPlanOverview>['bounds'];
 }) {
-  const x = bounds.minX * PLAN_SCALE;
-  const y = bounds.minZ * PLAN_SCALE;
-  const w = bounds.widthFt * PLAN_SCALE;
-  const h = bounds.depthFt * PLAN_SCALE;
+  const wallPad = WALL_THICKNESS_FT * PLAN_SCALE;
+  const x = bounds.minX * PLAN_SCALE - wallPad;
+  const y = bounds.minZ * PLAN_SCALE - wallPad;
+  const w = bounds.widthFt * PLAN_SCALE + wallPad * 2;
+  const h = bounds.depthFt * PLAN_SCALE + wallPad * 2;
   const wLabel = formatFeetInches(bounds.widthFt);
   const dLabel = formatFeetInches(bounds.depthFt);
 
@@ -921,10 +1165,12 @@ function RoomBlock({
   mode,
   inMergedGroup,
   isDragging,
+  isSelected,
   isConnectPick,
   projectId,
   planOriginX,
   planOriginZ,
+  siblings,
   onConnect,
   onExteriorDoor,
   onFlip,
@@ -937,17 +1183,19 @@ function RoomBlock({
   mode: Mode;
   inMergedGroup: boolean;
   isDragging: boolean;
+  isSelected: boolean;
   isConnectPick: boolean;
   projectId: string;
   planOriginX: number;
   planOriginZ: number;
+  siblings: RoomRect[];
   onConnect: (roomId: string) => void;
   onExteriorDoor: (room: Room, clickXFt: number, clickZFt: number) => void;
   onFlip: () => void;
   flipPending: boolean;
   onDragStart: () => void;
   onDragMove: (layoutX: number, layoutZ: number) => void;
-  onDragEnd: (layoutX: number, layoutZ: number) => void;
+  onDragEnd: (layoutX: number, layoutZ: number, moved: boolean) => void;
 }) {
   const lx = room.layoutX ?? 0;
   const lz = room.layoutZ ?? 0;
@@ -956,16 +1204,7 @@ function RoomBlock({
   const y = lz * PLAN_SCALE;
   const w = room.widthFt * PLAN_SCALE;
   const h = room.depthFt * PLAN_SCALE;
-  const fill =
-    room.type === 'kitchen'
-      ? '#c4b5a0'
-      : room.type === 'bathroom'
-        ? '#c5d4dc'
-        : room.type === 'bedroom'
-          ? '#ddd6fe'
-          : room.type === 'hallway'
-            ? '#d4cfc7'
-            : '#e7e5e4';
+  const fill = roomPlanFill(room.type);
 
   // Drag state lives in refs so pointermove handler stays stable & cheap.
   const dragRef = useRef<{
@@ -1002,8 +1241,14 @@ function RoomBlock({
     if (!state) return;
     const dx = (e.clientX - state.startClientX) / PLAN_SCALE;
     const dz = (e.clientY - state.startClientY) / PLAN_SCALE;
-    const newX = Math.max(0, Math.round((state.startLayoutX + dx) * 2) / 2);
-    const newZ = Math.max(0, Math.round((state.startLayoutZ + dz) * 2) / 2);
+    const proposedX = snapLayoutFt(state.startLayoutX + dx);
+    const proposedZ = snapLayoutFt(state.startLayoutZ + dz);
+    const resolved = snapAndResolveRoomPosition(
+      { roomId: room.roomId, x: proposedX, z: proposedZ, w: room.widthFt, d: room.depthFt },
+      siblings,
+    );
+    const newX = snapLayoutFt(resolved.x);
+    const newZ = snapLayoutFt(resolved.z);
     if (newX === lx && newZ === lz) return;
     state.moved = true;
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
@@ -1021,24 +1266,30 @@ function RoomBlock({
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-    // Compute final position from drag delta — don't rely on render-time lx/lz
-    // which may be stale if the last rAF hasn't flushed yet.
     const dx = (e.clientX - state.startClientX) / PLAN_SCALE;
     const dz = (e.clientY - state.startClientY) / PLAN_SCALE;
-    const finalX = Math.max(0, Math.round((state.startLayoutX + dx) * 2) / 2);
-    const finalZ = Math.max(0, Math.round((state.startLayoutZ + dz) * 2) / 2);
-    onDragEnd(finalX, finalZ);
+    const proposedX = snapLayoutFt(state.startLayoutX + dx);
+    const proposedZ = snapLayoutFt(state.startLayoutZ + dz);
+    const resolved = snapAndResolveRoomPosition(
+      { roomId: room.roomId, x: proposedX, z: proposedZ, w: room.widthFt, d: room.depthFt },
+      siblings,
+    );
+    const finalX = snapLayoutFt(resolved.x);
+    const finalZ = snapLayoutFt(resolved.z);
+    onDragEnd(finalX, finalZ, state.moved);
   };
 
   const isInteractive = mode === 'arrange' || mode === 'connect' || mode === 'exterior-doors';
   const strokeColor = isConnectPick
     ? '#7c3aed'
-    : isDragging
-      ? '#5c7a6a'
-      : inMergedGroup
-        ? 'transparent'
-        : '#78716c';
-  const strokeWidth = isConnectPick ? 3 : isDragging ? 2.5 : inMergedGroup ? 0 : 1.5;
+    : isSelected
+      ? '#3f5b4d'
+      : isDragging
+        ? '#5c7a6a'
+        : inMergedGroup
+          ? 'transparent'
+          : '#78716c';
+  const strokeWidth = isConnectPick ? 3 : isSelected ? 3 : isDragging ? 2.5 : inMergedGroup ? 0 : 1.5;
 
   const clientToPlanFt = (clientX: number, clientY: number) => {
     const svg = document.querySelector('[data-floor-plan-svg]') as SVGSVGElement | null;
@@ -1059,7 +1310,7 @@ function RoomBlock({
         y={y}
         width={w}
         height={h}
-        rx={4}
+        rx={2}
         fill={inMergedGroup ? 'transparent' : fill}
         stroke={strokeColor}
         strokeWidth={strokeWidth}
@@ -1069,12 +1320,12 @@ function RoomBlock({
           mode === 'exterior-doors' && 'cursor-crosshair',
         )}
         onPointerDown={(e) => {
+          e.stopPropagation();
           if (mode === 'connect') {
             onConnect(room.roomId);
             return;
           }
           if (mode === 'exterior-doors') {
-            e.stopPropagation();
             const pt = clientToPlanFt(e.clientX, e.clientY);
             onExteriorDoor(room, pt.x, pt.z);
             return;
@@ -1104,7 +1355,7 @@ function RoomBlock({
       >
         {preset.label} · {formatFeetInchesPair(room.widthFt, room.depthFt)}
       </text>
-      {mode === 'arrange' && (
+      {mode === 'arrange' && isSelected && w >= 36 && h >= 28 && (
         <foreignObject x={x + w - 52} y={y + 4} width={48} height={18}>
           <button
             type="button"
@@ -1121,7 +1372,8 @@ function RoomBlock({
           </button>
         </foreignObject>
       )}
-      <foreignObject x={x + 4} y={y + h - 22} width={Math.max(w - 8, 24)} height={18}>
+      {mode === 'arrange' && isSelected && w >= 44 && h >= 24 && (
+        <foreignObject x={x + 4} y={y + h - 22} width={Math.min(Math.max(w - 8, 24), 72)} height={18}>
         <Link
           href={`/planner/${projectId}/${room.roomId}`}
           className="block rounded bg-white/90 px-2 py-0.5 text-center text-[10px] font-semibold text-[var(--sage-800)] shadow hover:bg-white"
@@ -1129,6 +1381,7 @@ function RoomBlock({
           Open 3D →
         </Link>
       </foreignObject>
+      )}
     </g>
   );
 }
