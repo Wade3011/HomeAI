@@ -4,6 +4,7 @@ export type CatalogSectionId =
   | 'base-cabinets'
   | 'wall-cabinets'
   | 'countertops'
+  | 'appliances'
   | 'vanities'
   | 'toilets'
   | 'showers'
@@ -69,6 +70,7 @@ export function isShowerItem(item: CatalogItem): boolean {
 
 export function catalogSectionForItem(item: CatalogItem): CatalogSectionId {
   if (item.category === 'countertop') return 'countertops';
+  if (item.category === 'appliance') return 'appliances';
   if (item.category === 'toilet') return 'toilets';
   if (item.category === 'shower') return 'showers';
   if (item.category === 'vanity') return 'vanities';

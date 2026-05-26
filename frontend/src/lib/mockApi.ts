@@ -4,15 +4,22 @@ import {
   estimateRoomTotal,
   getCatalog,
   getCatalogItem,
+  getConnections,
   getPlacements,
   getProject,
   getProjects,
   getRoom,
   getRoomsForProject,
   savePlacements,
+  setConnections,
   updateRoom as updateRoomInStore,
 } from '@/lib/mockStore';
-import type { Placement } from '@/types';
+import {
+  getCatalogItemsByIds,
+  getCatalogItemsForSections,
+} from '@/lib/catalog';
+import type { CatalogSectionId } from '@/config/catalogCategories';
+import type { Placement, RoomConnection } from '@/types';
 
 function json(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -21,17 +28,34 @@ function json(status: number, body: unknown) {
   });
 }
 
+function parsePath(path: string) {
+  const [pathname, search = ''] = path.split('?');
+  return {
+    parts: pathname.replace(/^\/+/, '').split('/').filter(Boolean),
+    params: new URLSearchParams(search),
+  };
+}
+
 export async function handleMockApi(
   path: string,
   method: string,
   bodyText?: string,
 ): Promise<Response> {
-  const parts = path.replace(/^\/+/, '').split('/').filter(Boolean);
+  const { parts, params } = parsePath(path);
   const body = bodyText ? JSON.parse(bodyText) : {};
 
   try {
     if (parts[0] === 'catalog') {
       if (method === 'GET' && parts.length === 1) {
+        const ids = params.get('ids')?.split(',').filter(Boolean) ?? [];
+        const sections =
+          params.get('sections')?.split(',').filter(Boolean) as CatalogSectionId[] | undefined;
+        if (ids.length > 0) {
+          return json(200, { items: getCatalogItemsByIds(ids) });
+        }
+        if (sections && sections.length > 0) {
+          return json(200, { items: getCatalogItemsForSections(sections) });
+        }
         return json(200, { items: getCatalog() });
       }
       if (method === 'GET' && parts.length === 2) {
@@ -67,6 +91,17 @@ export async function handleMockApi(
             return json(201, { room });
           }
         }
+
+        if (parts[2] === 'connections') {
+          if (method === 'GET') {
+            return json(200, { connections: getConnections(projectId) });
+          }
+          if (method === 'PUT') {
+            const incoming = (body.connections as RoomConnection[] | undefined) ?? [];
+            const saved = setConnections(projectId, incoming);
+            return json(200, { connections: saved });
+          }
+        }
       }
     }
 
@@ -99,7 +134,10 @@ export async function handleMockApi(
           layoutZ: body.layoutZ != null ? Number(body.layoutZ) : room.layoutZ,
         });
         if (!updated) return json(404, { error: 'not_found', message: 'Room not found' });
-        return json(200, { room: updated });
+        return json(200, {
+          room: updated.room,
+          adjustedRooms: updated.adjustedRooms,
+        });
       }
     }
 

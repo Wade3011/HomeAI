@@ -2,8 +2,16 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
+import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useState } from 'react';
-import { fetchCatalog, fetchProjectRooms, fetchRoom, savePlacements, updateRoom } from '@/lib/api';
+import {
+  fetchCatalog,
+  fetchCatalogByIds,
+  fetchConnections,
+  fetchProjectRooms,
+  savePlacements,
+  updateRoom,
+} from '@/lib/api';
 import { computePlacementEstimate } from '@/lib/estimate';
 import { isWallCabinet } from '@/config/catalogCategories';
 import { roomTypePreset, normalizeRoomType } from '@/config/roomTypes';
@@ -32,6 +40,7 @@ import {
   resolvePlacementY,
 } from '@/lib/placementHeight';
 import { resolvePlacementItem } from '@/lib/placementItem';
+import { normalizeCustomItemSpec, sectionalBoundsFt } from '@/lib/sectionalGeometry';
 import { PlacementInfoOverlay } from '@/components/planner/PlacementInfoOverlay';
 import {
   buildFootprints,
@@ -44,9 +53,23 @@ import { CustomItemsPanel } from '@/components/planner/CustomItemsPanel';
 import { RoomSwitcher } from '@/components/planner/RoomSwitcher';
 import { PlannerProvider, usePlanner } from '@/contexts/PlannerContext';
 import { CatalogPanel } from '@/components/planner/CatalogPanel';
-import { PlannerScene } from '@/components/planner/PlannerScene';
 import { RoomSettingsPanel } from '@/components/planner/RoomSettingsPanel';
 import type { CatalogItem, Room } from '@/types';
+
+const PlannerScene = dynamic(
+  () =>
+    import('@/components/planner/PlannerScene').then((mod) => ({
+      default: mod.PlannerScene,
+    })),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-full min-h-[480px] items-center justify-center rounded-xl border border-stone-300 bg-[#ebe8e3]">
+        <span className="inline-block h-3 w-3 animate-pulse rounded-full bg-[var(--sage-600)]" />
+      </div>
+    ),
+  },
+);
 
 function PlannerInner({
   projectId,
@@ -80,14 +103,54 @@ function PlannerInner({
     cancelPlaceMode,
   } = usePlanner();
 
-  const { data: catalog = [] } = useQuery({
-    queryKey: ['catalog'],
-    queryFn: () => fetchCatalog(),
+  const [catalogPanelOpen, setCatalogPanelOpen] = useState(false);
+
+  const placementCatalogIds = useMemo(
+    () =>
+      [
+        ...new Set(
+          placements
+            .map((p) => p.catalogItemId)
+            .filter((id): id is string => typeof id === 'string' && id.length > 0),
+        ),
+      ],
+    [placements],
+  );
+
+  const placementIdsKey = placementCatalogIds.slice().sort().join(',');
+
+  const { data: sceneCatalogItems = [] } = useQuery({
+    queryKey: ['catalog', 'ids', placementIdsKey],
+    queryFn: () => fetchCatalogByIds(placementCatalogIds),
+    enabled: placementCatalogIds.length > 0,
+    staleTime: 5 * 60_000,
   });
+
+  const sectionsKey = roomPreset.catalogSections.join(',');
+  const { data: panelCatalogItems = [], isFetching: catalogPanelLoading } = useQuery({
+    queryKey: ['catalog', 'sections', sectionsKey],
+    queryFn: () => fetchCatalog({ sections: roomPreset.catalogSections }),
+    enabled: roomPreset.catalogSections.length > 0 && catalogPanelOpen,
+    staleTime: 10 * 60_000,
+  });
+
+  const catalog = useMemo(() => {
+    const byId = new Map<string, CatalogItem>();
+    for (const item of sceneCatalogItems) byId.set(item.itemId, item);
+    for (const item of panelCatalogItems) byId.set(item.itemId, item);
+    return Array.from(byId.values());
+  }, [sceneCatalogItems, panelCatalogItems]);
 
   const { data: projectRooms = [] } = useQuery({
     queryKey: ['rooms', projectId],
     queryFn: () => fetchProjectRooms(projectId),
+    staleTime: 60_000,
+  });
+
+  const { data: connections = [] } = useQuery({
+    queryKey: ['connections', projectId],
+    queryFn: () => fetchConnections(projectId),
+    staleTime: 60_000,
   });
 
   const saveMutation = useMutation({
@@ -100,9 +163,18 @@ function PlannerInner({
   const roomMutation = useMutation({
     mutationFn: (dims: { widthFt: number; depthFt: number; heightFt: number }) =>
       updateRoom(room.roomId, dims),
-    onSuccess: (updated) => {
+    onSuccess: ({ room: updated, adjustedRooms }) => {
       setRoom(updated);
       queryClient.setQueryData(['room', room.roomId], updated);
+
+      const touched = new Map<string, Room>([[updated.roomId, updated]]);
+      for (const adjusted of adjustedRooms) {
+        touched.set(adjusted.roomId, adjusted);
+      }
+      queryClient.setQueryData<Room[] | undefined>(['rooms', projectId], (prev) =>
+        prev?.map((r) => touched.get(r.roomId) ?? r),
+      );
+      queryClient.invalidateQueries({ queryKey: ['rooms', projectId] });
     },
   });
 
@@ -258,8 +330,16 @@ function PlannerInner({
 
   const tryPlaceCustom = (x: number, z: number, rotationY: number) => {
     if (!customDragItem) return false;
-    const widthFt = customDragItem.widthIn / 12;
-    const depthFt = customDragItem.depthIn / 12;
+    const spec = normalizeCustomItemSpec({
+      label: customDragItem.label,
+      shape: customDragItem.shape,
+      widthIn: customDragItem.widthIn,
+      depthIn: customDragItem.depthIn,
+      heightIn: customDragItem.heightIn,
+      sectionalRunIn: customDragItem.sectionalRunIn,
+      sectionalArmDepthIn: customDragItem.sectionalArmDepthIn,
+    });
+    const { widthFt, depthFt } = sectionalBoundsFt(spec);
     const fps = buildFootprints(placements, catalogById);
     const resolved = resolvePlacementPosition({
       x,
@@ -274,16 +354,7 @@ function PlannerInner({
       nudgeFt: 2,
     });
     if (!resolved) return false;
-    addCustomPlacement(
-      {
-        label: customDragItem.label,
-        shape: customDragItem.shape,
-        widthIn: customDragItem.widthIn,
-        depthIn: customDragItem.depthIn,
-        heightIn: customDragItem.heightIn,
-      },
-      { x: resolved.x, z: resolved.z, rotationY },
-    );
+    addCustomPlacement(spec, { x: resolved.x, z: resolved.z, rotationY });
     cancelPlaceMode();
     setPlaceRotationSteps(0);
     return true;
@@ -368,21 +439,34 @@ function PlannerInner({
           />
         </CollapsiblePanel>
         {roomPreset.catalogSections.length > 0 && (
-          <CollapsiblePanel title="Catalog" side="left" defaultOpen={false} widthClass="w-64">
-            <CatalogPanel
-              items={catalog}
-              activeItemId={activeCatalogId}
-              allowedSections={roomPreset.catalogSections}
-              onPick={(item) => {
-                setCustomDragItem(null);
-                if (catalogDragItem?.itemId === item.itemId) {
-                  setCatalogDragItem(null);
-                  setPlaceRotationSteps(0);
-                } else {
-                  setCatalogDragItem(item);
-                }
-              }}
-            />
+          <CollapsiblePanel
+            title="Catalog"
+            side="left"
+            defaultOpen={false}
+            widthClass="w-64"
+            onOpenChange={setCatalogPanelOpen}
+          >
+            {catalogPanelLoading && panelCatalogItems.length === 0 ? (
+              <p className="flex items-center gap-2 p-3 text-xs text-stone-500">
+                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-stone-400" />
+                Loading catalog…
+              </p>
+            ) : (
+              <CatalogPanel
+                items={catalog}
+                activeItemId={activeCatalogId}
+                allowedSections={roomPreset.catalogSections}
+                onPick={(item) => {
+                  setCustomDragItem(null);
+                  if (catalogDragItem?.itemId === item.itemId) {
+                    setCatalogDragItem(null);
+                    setPlaceRotationSteps(0);
+                  } else {
+                    setCatalogDragItem(item);
+                  }
+                }}
+              />
+            )}
           </CollapsiblePanel>
         )}
         {roomPreset.allowsCustomItems && (
@@ -467,6 +551,8 @@ function PlannerInner({
               room={room}
               placements={placements}
               catalogById={catalogById}
+              projectRooms={projectRooms}
+              connections={connections}
               catalogItemForPlace={catalogDragItem}
               customItemForPlace={customDragItem}
               placeRotationSteps={placeRotationSteps}
@@ -549,29 +635,17 @@ function PlannerInner({
 export function PlannerWorkspace({
   projectId,
   roomId,
+  initialRoom,
   initialPlacements,
 }: {
   projectId: string;
   roomId: string;
+  initialRoom: Room;
   initialPlacements: import('@/types').Placement[];
 }) {
-  const { data: room, isLoading } = useQuery({
-    queryKey: ['room', roomId],
-    queryFn: () => fetchRoom(roomId),
-  });
-
-  if (isLoading || !room) {
-    return (
-      <p className="flex items-center justify-center gap-2 p-8 text-stone-600">
-        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-stone-400" />
-        Loading planner…
-      </p>
-    );
-  }
-
   return (
     <PlannerProvider roomId={roomId} initialPlacements={initialPlacements}>
-      <PlannerInner projectId={projectId} initialRoom={room} />
+      <PlannerInner projectId={projectId} initialRoom={initialRoom} />
     </PlannerProvider>
   );
 }

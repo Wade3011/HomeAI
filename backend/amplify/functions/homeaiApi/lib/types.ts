@@ -27,10 +27,12 @@ export interface PlacementRecord {
   catalogItemId?: string;
   customItem?: {
     label: string;
-    shape: 'box' | 'round';
+    shape: 'box' | 'round' | 'sectional-l' | 'sectional-u' | 'sectional-chase';
     widthIn: number;
     depthIn: number;
     heightIn: number;
+    sectionalRunIn?: number;
+    sectionalArmDepthIn?: number;
   };
   positionX: number;
   positionY: number;

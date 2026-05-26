@@ -1,5 +1,9 @@
 import { isWallCabinet } from '@/config/catalogCategories';
 import type { CatalogItem, Placement } from '@/types';
+import {
+  snapBaseCabinetPosition,
+  snapWallCabinetWithNeighbors,
+} from '@/lib/cabinetNeighborSnap';
 import { catalogDimensionsFt, orientedDimensions } from '@/components/planner/placementCollision';
 import {
   countertopHasBaseSupport,
@@ -370,6 +374,7 @@ export function applyPlacementSnap(
   roomWidthFt: number,
   roomDepthFt: number,
   wall?: RoomWallId,
+  excludePlacementId?: string,
 ): PlacementSnapResult | null {
   const { widthFt, depthFt } = catalogDimensionsFt(item);
   const rotationY = rotationYFromSteps(rotationSteps);
@@ -385,21 +390,46 @@ export function applyPlacementSnap(
       catalogById,
       roomWidthFt,
       roomDepthFt,
+      excludePlacementId,
     );
     return pos ? { ...pos, rotationY } : null;
   }
 
   if (isWallCabinet(item)) {
-    return snapWallCabinetFromClick(
+    const targetWall = wall ?? nearestWall(clickX, clickZ, roomWidthFt, roomDepthFt);
+    const wallRotationY = WALL_BASE_ROTATION[targetWall] + rotationYFromSteps(rotationSteps);
+    const pos = snapWallCabinetWithNeighbors({
       clickX,
       clickZ,
       widthFt,
       depthFt,
-      rotationSteps,
+      rotationY: wallRotationY,
+      wall: targetWall,
       roomWidthFt,
       roomDepthFt,
-      wall,
-    );
+      placements,
+      catalogById,
+      excludePlacementId,
+      placingItem: item,
+    });
+    return pos ? { ...pos, rotationY: wallRotationY } : null;
+  }
+
+  if (isBaseCabinetItem(item)) {
+    const pos = snapBaseCabinetPosition({
+      clickX,
+      clickZ,
+      widthFt,
+      depthFt,
+      rotationY,
+      roomWidthFt,
+      roomDepthFt,
+      placements,
+      catalogById,
+      excludePlacementId,
+      placingItem: item,
+    });
+    return pos ? { ...pos, rotationY } : null;
   }
 
   const { x, z } = clickToPlacementOrigin(clickX, clickZ, widthFt, depthFt, rotationY);

@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "generatedAt": "2026-05-22T17:41:41.278Z",
+  "generatedAt": "2026-05-26T02:14:07.567Z",
   "priceDisclaimer": "Material-only list prices. Menards lines + bath fixtures calibrated 2026-05-19 from retailer/manufacturer data; other brands scaled from reference SKUs. Store promos and install not included. Future: API priceSource overrides via S3.",
   "priceCalibratedAt": "2026-05-19",
   "stats": {
@@ -9,7 +9,8 @@
     "vanityBrands": 42,
     "toiletSkus": 11,
     "showerSkus": 14,
-    "totalSkus": 3160
+    "applianceSkus": 16,
+    "totalSkus": 3176
   },
   "brands": {
     "cabinets": [
@@ -1127,6 +1128,72 @@
       {
         "id": "menards-tub-60",
         "name": "Swan"
+      }
+    ],
+    "appliances": [
+      {
+        "id": "bosch-300-dishwasher",
+        "name": "Bosch"
+      },
+      {
+        "id": "ge-profile-dishwasher",
+        "name": "GE Profile"
+      },
+      {
+        "id": "whirlpool-dishwasher",
+        "name": "Whirlpool"
+      },
+      {
+        "id": "frigidaire-dishwasher",
+        "name": "Frigidaire"
+      },
+      {
+        "id": "ge-wall-oven-30",
+        "name": "GE"
+      },
+      {
+        "id": "ge-double-oven-30",
+        "name": "GE"
+      },
+      {
+        "id": "kitchenaid-wall-oven-27",
+        "name": "KitchenAid"
+      },
+      {
+        "id": "bosch-wall-oven-30",
+        "name": "Bosch"
+      },
+      {
+        "id": "ge-range-30-gas",
+        "name": "GE"
+      },
+      {
+        "id": "ge-range-30-electric",
+        "name": "GE"
+      },
+      {
+        "id": "samsung-range-30-gas",
+        "name": "Samsung"
+      },
+      {
+        "id": "whirlpool-range-30",
+        "name": "Whirlpool"
+      },
+      {
+        "id": "ge-range-otr-30",
+        "name": "GE"
+      },
+      {
+        "id": "whirlpool-range-otr-30",
+        "name": "Whirlpool"
+      },
+      {
+        "id": "frigidaire-range-otr-30",
+        "name": "Frigidaire"
+      },
+      {
+        "id": "samsung-range-otr-30",
+        "name": "Samsung"
       }
     ]
   },
@@ -45544,6 +45611,246 @@
       "heightIn": 16,
       "listPrice": 249,
       "material": "Vikrell / acrylic",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-bosch-300-dishwasher",
+      "category": "appliance",
+      "subcategory": "dishwasher",
+      "brand": "Bosch",
+      "brandId": "bosch-300-dishwasher",
+      "name": "Bosch 300 Series Dishwasher 24\"",
+      "widthIn": 24,
+      "depthIn": 24,
+      "heightIn": 34,
+      "listPrice": 849,
+      "material": "Stainless steel",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-ge-profile-dishwasher",
+      "category": "appliance",
+      "subcategory": "dishwasher",
+      "brand": "GE Profile",
+      "brandId": "ge-profile-dishwasher",
+      "name": "GE Profile Profile Dishwasher 24\"",
+      "widthIn": 24,
+      "depthIn": 24,
+      "heightIn": 34,
+      "listPrice": 799,
+      "material": "Fingerprint-resistant stainless",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-whirlpool-dishwasher",
+      "category": "appliance",
+      "subcategory": "dishwasher",
+      "brand": "Whirlpool",
+      "brandId": "whirlpool-dishwasher",
+      "name": "Whirlpool Stainless Dishwasher 24\"",
+      "widthIn": 24,
+      "depthIn": 24,
+      "heightIn": 34,
+      "listPrice": 649,
+      "material": "Stainless steel",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-frigidaire-dishwasher",
+      "category": "appliance",
+      "subcategory": "dishwasher",
+      "brand": "Frigidaire",
+      "brandId": "frigidaire-dishwasher",
+      "name": "Frigidaire Gallery Dishwasher 24\"",
+      "widthIn": 24,
+      "depthIn": 24,
+      "heightIn": 34,
+      "listPrice": 599,
+      "material": "Stainless steel",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-ge-wall-oven-30",
+      "category": "appliance",
+      "subcategory": "oven",
+      "brand": "GE",
+      "brandId": "ge-wall-oven-30",
+      "name": "GE 30\" Single Wall Oven",
+      "widthIn": 30,
+      "depthIn": 24,
+      "heightIn": 28,
+      "listPrice": 1299,
+      "material": "Stainless steel",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-ge-double-oven-30",
+      "category": "appliance",
+      "subcategory": "oven",
+      "brand": "GE",
+      "brandId": "ge-double-oven-30",
+      "name": "GE 30\" Double Wall Oven",
+      "widthIn": 30,
+      "depthIn": 24,
+      "heightIn": 51,
+      "listPrice": 2499,
+      "material": "Stainless steel",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-kitchenaid-wall-oven-27",
+      "category": "appliance",
+      "subcategory": "oven",
+      "brand": "KitchenAid",
+      "brandId": "kitchenaid-wall-oven-27",
+      "name": "KitchenAid 27\" Single Wall Oven",
+      "widthIn": 27,
+      "depthIn": 24,
+      "heightIn": 28,
+      "listPrice": 1899,
+      "material": "Stainless steel",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-bosch-wall-oven-30",
+      "category": "appliance",
+      "subcategory": "oven",
+      "brand": "Bosch",
+      "brandId": "bosch-wall-oven-30",
+      "name": "Bosch 500 Series Wall Oven 30\"",
+      "widthIn": 30,
+      "depthIn": 24,
+      "heightIn": 28,
+      "listPrice": 2199,
+      "material": "Stainless steel",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-ge-range-30-gas",
+      "category": "appliance",
+      "subcategory": "range",
+      "brand": "GE",
+      "brandId": "ge-range-30-gas",
+      "name": "GE 30\" Freestanding Gas Range",
+      "widthIn": 30,
+      "depthIn": 28,
+      "heightIn": 36,
+      "listPrice": 699,
+      "material": "Stainless steel",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-ge-range-30-electric",
+      "category": "appliance",
+      "subcategory": "range",
+      "brand": "GE",
+      "brandId": "ge-range-30-electric",
+      "name": "GE 30\" Freestanding Electric Range",
+      "widthIn": 30,
+      "depthIn": 28,
+      "heightIn": 36,
+      "listPrice": 649,
+      "material": "Stainless steel",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-samsung-range-30-gas",
+      "category": "appliance",
+      "subcategory": "range",
+      "brand": "Samsung",
+      "brandId": "samsung-range-30-gas",
+      "name": "Samsung 30\" Gas Range",
+      "widthIn": 30,
+      "depthIn": 28,
+      "heightIn": 36,
+      "listPrice": 899,
+      "material": "Stainless steel",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-whirlpool-range-30",
+      "category": "appliance",
+      "subcategory": "range",
+      "brand": "Whirlpool",
+      "brandId": "whirlpool-range-30",
+      "name": "Whirlpool 30\" Gas Range",
+      "widthIn": 30,
+      "depthIn": 28,
+      "heightIn": 36,
+      "listPrice": 749,
+      "material": "Stainless steel",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-ge-range-otr-30",
+      "category": "appliance",
+      "subcategory": "range-microwave",
+      "brand": "GE",
+      "brandId": "ge-range-otr-30",
+      "name": "GE 30\" Range + Over-the-Range Microwave",
+      "widthIn": 30,
+      "depthIn": 28,
+      "heightIn": 66,
+      "listPrice": 1099,
+      "material": "Stainless steel",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-whirlpool-range-otr-30",
+      "category": "appliance",
+      "subcategory": "range-microwave",
+      "brand": "Whirlpool",
+      "brandId": "whirlpool-range-otr-30",
+      "name": "Whirlpool 30\" Range w/ OTR Microwave",
+      "widthIn": 30,
+      "depthIn": 28,
+      "heightIn": 66,
+      "listPrice": 1149,
+      "material": "Stainless steel",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-frigidaire-range-otr-30",
+      "category": "appliance",
+      "subcategory": "range-microwave",
+      "brand": "Frigidaire",
+      "brandId": "frigidaire-range-otr-30",
+      "name": "Frigidaire 30\" Gallery Range + Microwave",
+      "widthIn": 30,
+      "depthIn": 28,
+      "heightIn": 66,
+      "listPrice": 999,
+      "material": "Stainless steel",
+      "priceSource": "manual",
+      "priceUpdatedAt": "2026-05-19"
+    },
+    {
+      "itemId": "appliance-samsung-range-otr-30",
+      "category": "appliance",
+      "subcategory": "range-microwave",
+      "brand": "Samsung",
+      "brandId": "samsung-range-otr-30",
+      "name": "Samsung 30\" Range + OTR Microwave Combo",
+      "widthIn": 30,
+      "depthIn": 28,
+      "heightIn": 66,
+      "listPrice": 1249,
+      "material": "Stainless steel",
       "priceSource": "manual",
       "priceUpdatedAt": "2026-05-19"
     }

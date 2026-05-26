@@ -12,6 +12,8 @@ export function meshColor(item: CatalogItem, selected: boolean): string {
       return '#9fb3c8';
     case 'countertops':
       return '#d6d0c4';
+    case 'appliances':
+      return '#b0b8c0';
     case 'vanities':
       return '#b8a99a';
     case 'toilets':

@@ -8,15 +8,22 @@ export function CollapsiblePanel({
   side = 'left',
   defaultOpen = false,
   widthClass = 'w-56',
+  onOpenChange,
   children,
 }: {
   title: string;
   side?: 'left' | 'right';
   defaultOpen?: boolean;
   widthClass?: string;
+  onOpenChange?: (open: boolean) => void;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+
+  const setPanelOpen = (next: boolean) => {
+    setOpen(next);
+    onOpenChange?.(next);
+  };
 
   const borderClass = side === 'left' ? 'border-r' : 'border-l';
   const CollapseIcon = side === 'left' ? (open ? '‹' : '›') : open ? '›' : '‹';
@@ -31,7 +38,7 @@ export function CollapsiblePanel({
       >
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={() => setPanelOpen(true)}
           title={`Show ${title}`}
           aria-expanded={false}
           aria-label={`Expand ${title}`}
@@ -61,7 +68,7 @@ export function CollapsiblePanel({
         <h2 className="truncate text-xs font-bold uppercase tracking-wide">{title}</h2>
         <button
           type="button"
-          onClick={() => setOpen(false)}
+          onClick={() => setPanelOpen(false)}
           title={`Hide ${title}`}
           aria-expanded
           aria-label={`Collapse ${title}`}

@@ -1,10 +1,14 @@
 'use client';
 
 import type { CustomItemShape, CustomItemSpec } from '@/types';
+import { isSectionalShape, sectionalDefaults, sectionalShapeLabel } from '@/lib/sectionalGeometry';
 
 const SHAPES: { id: CustomItemShape; label: string }[] = [
   { id: 'box', label: 'Box' },
   { id: 'round', label: 'Round' },
+  { id: 'sectional-l', label: 'L-sectional' },
+  { id: 'sectional-chase', label: 'Chaise' },
+  { id: 'sectional-u', label: 'U-sectional' },
 ];
 
 export function CustomPlacementEditor({
@@ -30,13 +34,22 @@ export function CustomPlacementEditor({
       </label>
       <fieldset>
         <legend className="text-[11px] text-stone-600">Shape</legend>
-        <div className="mt-1 flex gap-1">
+        <div className="mt-1 flex flex-wrap gap-1">
           {SHAPES.map((s) => (
             <button
               key={s.id}
               type="button"
-              onClick={() => onChange({ shape: s.id })}
-              className={`flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-medium transition ${
+              onClick={() => {
+                const patch: Partial<CustomItemSpec> = { shape: s.id };
+                if (isSectionalShape(s.id)) {
+                  const defaults = sectionalDefaults(s.id);
+                  patch.sectionalRunIn = customItem.sectionalRunIn ?? defaults.sectionalRunIn;
+                  patch.sectionalArmDepthIn =
+                    customItem.sectionalArmDepthIn ?? defaults.sectionalArmDepthIn;
+                }
+                onChange(patch);
+              }}
+              className={`rounded-lg border px-2 py-1.5 text-[10px] font-medium transition ${
                 customItem.shape === s.id
                   ? 'border-[var(--sage-600)] bg-[var(--sage-50)] text-[var(--sage-800)]'
                   : 'border-stone-200 bg-white text-stone-600 hover:bg-stone-50'
@@ -47,24 +60,64 @@ export function CustomPlacementEditor({
           ))}
         </div>
       </fieldset>
-      <div className="grid grid-cols-3 gap-1.5">
-        <DimField
-          label="Width"
-          inches={customItem.widthIn}
-          onChange={(widthIn) => onChange({ widthIn })}
-        />
-        <DimField
-          label="Depth"
-          inches={customItem.depthIn}
-          onChange={(depthIn) => onChange({ depthIn })}
-        />
-        <DimField
-          label="Height"
-          inches={customItem.heightIn}
-          onChange={(heightIn) => onChange({ heightIn })}
-        />
-      </div>
-      <p className="text-[10px] text-stone-400">Sizes in inches. No catalog pricing.</p>
+      {isSectionalShape(customItem.shape) ? (
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-1.5">
+            <DimField
+              label="Main width"
+              inches={customItem.widthIn}
+              onChange={(widthIn) => onChange({ widthIn })}
+            />
+            <DimField
+              label="Seat depth"
+              inches={customItem.depthIn}
+              onChange={(depthIn) => onChange({ depthIn })}
+            />
+            <DimField
+              label={customItem.shape === 'sectional-u' ? 'Arm run' : 'Chaise run'}
+              inches={customItem.sectionalRunIn ?? sectionalDefaults(customItem.shape).sectionalRunIn}
+              onChange={(sectionalRunIn) => onChange({ sectionalRunIn })}
+            />
+            <DimField
+              label={customItem.shape === 'sectional-u' ? 'Arm width' : 'Chaise width'}
+              inches={
+                customItem.sectionalArmDepthIn ??
+                sectionalDefaults(customItem.shape).sectionalArmDepthIn
+              }
+              onChange={(sectionalArmDepthIn) => onChange({ sectionalArmDepthIn })}
+            />
+          </div>
+          <DimField
+            label="Height"
+            inches={customItem.heightIn}
+            onChange={(heightIn) => onChange({ heightIn })}
+          />
+          <p className="text-[10px] text-stone-400">
+            {sectionalShapeLabel(customItem.shape)} · sizes in inches
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-1.5">
+          <DimField
+            label="Width"
+            inches={customItem.widthIn}
+            onChange={(widthIn) => onChange({ widthIn })}
+          />
+          <DimField
+            label="Depth"
+            inches={customItem.depthIn}
+            onChange={(depthIn) => onChange({ depthIn })}
+          />
+          <DimField
+            label="Height"
+            inches={customItem.heightIn}
+            onChange={(heightIn) => onChange({ heightIn })}
+          />
+        </div>
+      )}
+      {!isSectionalShape(customItem.shape) && (
+        <p className="text-[10px] text-stone-400">Sizes in inches. No catalog pricing.</p>
+      )}
     </div>
   );
 }

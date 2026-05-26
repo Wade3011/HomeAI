@@ -1,4 +1,5 @@
 import type { CatalogItem, CustomItemSpec, Placement } from '@/types';
+import { sectionalBoundsFt, normalizeCustomItemSpec } from '@/lib/sectionalGeometry';
 
 const INCHES_PER_FOOT = 12;
 
@@ -13,6 +14,7 @@ export interface ResolvedPlacementItem {
   widthFt: number;
   depthFt: number;
   heightFt: number;
+  customItem?: CustomItemSpec;
   catalogItem?: CatalogItem;
   /** Custom blocks are always floor-mounted */
   floorMounted: boolean;
@@ -31,18 +33,20 @@ export function resolvePlacementItem(
   catalogById: Record<string, CatalogItem>,
 ): ResolvedPlacementItem | null {
   if (placement.customItem) {
-    const c = placement.customItem;
+    const c = normalizeCustomItemSpec(placement.customItem);
+    const bounds = sectionalBoundsFt(c);
     return {
       isCustom: true,
       isCatalog: false,
       label: c.label,
       shape: c.shape,
-      widthIn: c.widthIn,
-      depthIn: c.depthIn,
+      widthIn: bounds.widthFt * INCHES_PER_FOOT,
+      depthIn: bounds.depthFt * INCHES_PER_FOOT,
       heightIn: c.heightIn,
-      widthFt: c.widthIn / INCHES_PER_FOOT,
-      depthFt: c.depthIn / INCHES_PER_FOOT,
+      widthFt: bounds.widthFt,
+      depthFt: bounds.depthFt,
       heightFt: c.heightIn / INCHES_PER_FOOT,
+      customItem: c,
       floorMounted: true,
     };
   }

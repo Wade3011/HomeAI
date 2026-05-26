@@ -11,6 +11,8 @@ export function customDragFromTemplate(template: {
   widthIn: number;
   depthIn: number;
   heightIn: number;
+  sectionalRunIn?: number;
+  sectionalArmDepthIn?: number;
 }): CustomDragTemplate {
   return {
     templateId: template.id,
@@ -19,5 +21,7 @@ export function customDragFromTemplate(template: {
     widthIn: template.widthIn,
     depthIn: template.depthIn,
     heightIn: template.heightIn,
+    sectionalRunIn: template.sectionalRunIn,
+    sectionalArmDepthIn: template.sectionalArmDepthIn,
   };
 }

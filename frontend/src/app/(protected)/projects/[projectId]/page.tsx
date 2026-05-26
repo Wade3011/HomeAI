@@ -39,14 +39,22 @@ export default function ProjectDetailPage({
             Arrange rooms on the floor plan, then open each room in the 3D planner.
           </p>
         </div>
-        {rooms[0] && (
+        <div className="flex gap-2">
           <Link
-            href={`/planner/${projectId}/${rooms[0].roomId}`}
-            className="btn-primary text-sm"
+            href={`/projects/${projectId}/3d`}
+            className="rounded-full border border-stone-300 bg-white px-4 py-2 text-sm font-semibold text-stone-700 hover:border-[var(--sage-600)]"
           >
-            Open first room in 3D
+            View whole home 3D
           </Link>
-        )}
+          {rooms[0] && (
+            <Link
+              href={`/planner/${projectId}/${rooms[0].roomId}`}
+              className="btn-primary text-sm"
+            >
+              Open first room in 3D
+            </Link>
+          )}
+        </div>
       </div>
 
       <FloorPlanEditor projectId={projectId} rooms={rooms} />

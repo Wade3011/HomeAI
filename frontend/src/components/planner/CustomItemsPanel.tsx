@@ -7,6 +7,7 @@ import {
   type CustomItemTemplate,
 } from '@/config/roomTypes';
 import { customDragFromTemplate } from '@/lib/customItems';
+import { sectionalShapeLabel } from '@/lib/sectionalGeometry';
 import type { CustomDragTemplate } from '@/lib/customItems';
 import type { RoomType } from '@/types';
 
@@ -50,10 +51,16 @@ function TemplateRow({
   active: boolean;
   onPick: () => void;
 }) {
-  const shapeLabel = template.shape === 'round' ? 'Round' : 'Box';
+  const shapeLabel = sectionalShapeLabel(template.shape);
   const w = template.widthIn / 12;
   const d = template.depthIn / 12;
   const h = template.heightIn / 12;
+  const dimNote =
+    template.shape === 'sectional-l' ||
+    template.shape === 'sectional-chase' ||
+    template.shape === 'sectional-u'
+      ? `${formatDim(w)}′ main + ${formatDim((template.sectionalRunIn ?? 68) / 12)}′ run`
+      : `${formatDim(w)} × ${formatDim(d)} × ${formatDim(h)} ft (default)`;
 
   return (
     <button
@@ -72,9 +79,7 @@ function TemplateRow({
           {shapeLabel}
         </span>
       </div>
-      <p className="mt-0.5 text-xs text-stone-500">
-        {formatDim(w)} × {formatDim(d)} × {formatDim(h)} ft (default)
-      </p>
+      <p className="mt-0.5 text-xs text-stone-500">{dimNote}</p>
     </button>
   );
 }

@@ -4,10 +4,14 @@ import { Canvas } from '@react-three/fiber';
 import { Grid } from '@react-three/drei';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { endActiveDragSession } from '@/lib/planner/dragSession';
-import type { CatalogItem, Placement, Room } from '@/types';
+import type { CatalogItem, CustomItemSpec, Placement, Room, RoomConnection } from '@/types';
 import { PlacementMesh } from '@/components/planner/PlacementMesh';
 import { FloorClickPlane } from '@/components/planner/FloorClickPlane';
 import { SceneControls } from '@/components/planner/SceneControls';
+import {
+  buildWallPlans,
+  RoomConnectionWalls,
+} from '@/components/planner/RoomConnectionWalls';
 import {
   buildFootprints,
   catalogDimensionsFt,
@@ -18,7 +22,7 @@ import {
 import { CABINET_GRID_FT, clampPlacementOrigin, snapToGrid } from '@/components/planner/plannerUtils';
 import { isBaseCabinetItem, isCountertopItem } from '@/lib/placementHeight';
 import { resolvePlacementItem } from '@/lib/placementItem';
-import type { CustomItemSpec } from '@/types';
+import { normalizeCustomItemSpec, sectionalBoundsFt } from '@/lib/sectionalGeometry';
 import { BaseCabinetHighlights } from '@/components/planner/BaseCabinetHighlights';
 import { isWallCabinet } from '@/config/catalogCategories';
 import { applyPlacementSnap, inferWallFromPlacement, type RoomWallId } from '@/lib/placementSnap';
@@ -28,6 +32,7 @@ import {
   RoomFloorDimensions,
   SelectedPlacementDimensions,
 } from '@/components/planner/SceneDimensions';
+import { WallToggleButton } from '@/components/planner/WallToggleButton';
 
 const INCHES_PER_FOOT = 12;
 
@@ -46,6 +51,8 @@ export function PlannerScene({
   onRotatePlacement,
   onDeselect,
   onCancelPlaceMode,
+  projectRooms = [],
+  connections = [],
 }: {
   room: Room;
   placements: Placement[];
@@ -61,8 +68,11 @@ export function PlannerScene({
   onRotatePlacement: (id: string) => boolean;
   onDeselect?: () => void;
   onCancelPlaceMode?: () => void;
+  projectRooms?: Room[];
+  connections?: RoomConnection[];
 }) {
   const [isDragging, setIsDragging] = useState(false);
+  const [showWalls, setShowWalls] = useState(true);
   const isDraggingRef = useRef(false);
   const setDragging = (value: boolean) => {
     isDraggingRef.current = value;
@@ -87,6 +97,13 @@ export function PlannerScene({
     () => ({ w: room.widthFt, d: room.depthFt, h: room.heightFt }),
     [room.widthFt, room.depthFt, room.heightFt],
   );
+
+  const wallPlans = useMemo(
+    () => buildWallPlans(room, projectRooms, connections),
+    [room, projectRooms, connections],
+  );
+
+  const hasConnections = wallPlans.some((w) => w.openings.length > 0);
 
   const cameraPosition = useMemo(
     () => [size.w * 0.85, Math.max(size.h * 1.1, 10), size.d * 1.05] as [number, number, number],
@@ -131,6 +148,9 @@ export function PlannerScene({
     const rotationY =
       rotationOverride ?? snapped.rotationY ?? rotationYFromSteps(placeRotationSteps);
 
+    const isCabinet =
+      isBaseCabinetItem(catalogItem) || isWallCabinet(catalogItem);
+
     const resolved = isCountertopItem(catalogItem)
       ? resolveCountertopPosition({
           x: snapped.x,
@@ -156,7 +176,7 @@ export function PlannerScene({
           footprints,
           placingItem: catalogItem,
           catalogById,
-          nudgeFt: 2,
+          nudgeFt: isCabinet ? 0 : 2,
         });
     if (!resolved) return false;
     return onPlaceAt(resolved.x, resolved.z, rotationY);
@@ -172,8 +192,8 @@ export function PlannerScene({
 
   const handleCustomPlaceAt = (clickX: number, clickZ: number): boolean => {
     if (!customItemForPlace) return false;
-    const widthFt = customItemForPlace.widthIn / INCHES_PER_FOOT;
-    const depthFt = customItemForPlace.depthIn / INCHES_PER_FOOT;
+    const spec = normalizeCustomItemSpec(customItemForPlace);
+    const { widthFt, depthFt } = sectionalBoundsFt(spec);
     const rotationY = rotationYFromSteps(placeRotationSteps);
     const o = orientedDimensions(widthFt, depthFt, rotationY);
     const clamped = clampPlacementOrigin(
@@ -213,6 +233,11 @@ export function PlannerScene({
         }
       }}
     >
+      <WallToggleButton
+        showWalls={showWalls}
+        onToggle={() => setShowWalls((v) => !v)}
+        className="absolute right-3 top-3 z-10"
+      />
       <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-xl border border-white/50 bg-slate-900/75 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-sm">
         <p>
           <strong>Drag</strong> rotate · <strong>Shift+drag</strong> pan · <strong>Right/middle-drag</strong> pan ·{' '}
@@ -256,18 +281,12 @@ export function PlannerScene({
           position={[size.w / 2, 0.02, size.d / 2]}
           raycast={() => null}
         />
-        <mesh position={[size.w / 2, size.h / 2, 0]} raycast={() => null}>
-          <boxGeometry args={[size.w, size.h, 0.06]} />
-          <meshStandardMaterial color="#e4e4e7" transparent opacity={0.4} />
-        </mesh>
-        <mesh position={[size.w / 2, size.h / 2, size.d]} raycast={() => null}>
-          <boxGeometry args={[size.w, size.h, 0.06]} />
-          <meshStandardMaterial color="#e4e4e7" transparent opacity={0.4} />
-        </mesh>
-        <mesh position={[0, size.h / 2, size.d / 2]} raycast={() => null}>
-          <boxGeometry args={[0.06, size.h, size.d]} />
-          <meshStandardMaterial color="#e4e4e7" transparent opacity={0.4} />
-        </mesh>
+        <RoomConnectionWalls
+          room={room}
+          wallPlans={wallPlans}
+          showWalls={showWalls}
+          showConnectionMarkers={hasConnections}
+        />
         <WallPlacementSurfaces
           roomWidth={size.w}
           roomDepth={size.d}

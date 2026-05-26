@@ -1,5 +1,6 @@
 import { getCatalogItem, getCatalogItems } from '@/lib/catalog';
-import type { Placement, Project, Room } from '@/types';
+import { computeConnectedLayoutPatches, enrichConnectionSides } from '@/lib/homeLayout';
+import type { Placement, Project, Room, RoomConnection } from '@/types';
 import { ROOM_TYPE_PRESETS, normalizeRoomType } from '@/config/roomTypes';
 
 export const DEV_PROJECT_ID = 'dev-project-1';
@@ -54,13 +55,31 @@ let rooms: Room[] = [
     depthFt: 14,
     heightFt: 9,
     layoutX: 0,
-    layoutZ: 14,
+    layoutZ: 12,
     createdAt: now,
     updatedAt: now,
   },
 ];
 
 let placements: Placement[] = [];
+
+let connections: RoomConnection[] = [
+  {
+    connectionId: 'conn-demo-kitchen-living',
+    projectId: DEV_PROJECT_ID,
+    roomAId: DEV_ROOM_ID,
+    roomBId: 'dev-room-living',
+    kind: 'open',
+    sideA: 'front',
+    sideB: 'back',
+  },
+];
+
+export interface UpdateRoomResult {
+  room: Room;
+  /** Rooms whose floor-plan position shifted to preserve connections. */
+  adjustedRooms: Room[];
+}
 
 export function getCatalog() {
   return getCatalogItems();
@@ -124,16 +143,51 @@ export function updateRoom(
   patch: Partial<
     Pick<Room, 'name' | 'widthFt' | 'depthFt' | 'heightFt' | 'layoutX' | 'layoutZ'>
   >,
-): Room | undefined {
+): UpdateRoomResult | undefined {
   const idx = rooms.findIndex((r) => r.roomId === roomId);
   if (idx < 0) return undefined;
+  const previous = rooms[idx];
   const updated: Room = {
-    ...rooms[idx],
+    ...previous,
     ...patch,
     updatedAt: new Date().toISOString(),
   };
-  rooms = rooms.map((r) => (r.roomId === roomId ? updated : r));
-  return updated;
+
+  const dimsChanged =
+    (patch.widthFt !== undefined && patch.widthFt !== previous.widthFt) ||
+    (patch.depthFt !== undefined && patch.depthFt !== previous.depthFt);
+
+  const layoutPatches =
+    dimsChanged && (patch.widthFt !== undefined || patch.depthFt !== undefined)
+      ? computeConnectedLayoutPatches(
+          rooms.filter((r) => r.projectId === previous.projectId),
+          getConnections(previous.projectId),
+          roomId,
+          previous,
+          updated,
+        )
+      : [];
+
+  const patchByRoomId = new Map(layoutPatches.map((p) => [p.roomId, p]));
+  const touchedAt = updated.updatedAt;
+
+  rooms = rooms.map((r) => {
+    if (r.roomId === roomId) return updated;
+    const layoutPatch = patchByRoomId.get(r.roomId);
+    if (!layoutPatch) return r;
+    return {
+      ...r,
+      layoutX: layoutPatch.layoutX,
+      layoutZ: layoutPatch.layoutZ,
+      updatedAt: touchedAt,
+    };
+  });
+
+  const adjustedRooms = layoutPatches
+    .map((p) => rooms.find((r) => r.roomId === p.roomId))
+    .filter((r): r is Room => r !== undefined);
+
+  return { room: updated, adjustedRooms };
 }
 
 const LEGACY_DEMO_PLACEMENT_IDS = new Set(['place-1', 'place-2', 'place-3']);
@@ -151,6 +205,23 @@ export function getPlacements(roomId: string): Placement[] {
 export function savePlacements(roomId: string, next: Placement[]): Placement[] {
   placements = placements.filter((p) => p.roomId !== roomId).concat(next);
   return getPlacements(roomId);
+}
+
+export function getConnections(projectId: string): RoomConnection[] {
+  const roomsById = new Map(getRoomsForProject(projectId).map((r) => [r.roomId, r]));
+  return connections
+    .filter((c) => c.projectId === projectId)
+    .map((c) => enrichConnectionSides(c, roomsById));
+}
+
+export function setConnections(
+  projectId: string,
+  next: RoomConnection[],
+): RoomConnection[] {
+  const roomsById = new Map(getRoomsForProject(projectId).map((r) => [r.roomId, r]));
+  const enriched = next.map((c) => enrichConnectionSides({ ...c, projectId }, roomsById));
+  connections = connections.filter((c) => c.projectId !== projectId).concat(enriched);
+  return getConnections(projectId);
 }
 
 export function estimateRoomTotal(roomId: string): {

@@ -4,8 +4,10 @@ import type {
   PriceEstimate,
   Project,
   Room,
+  RoomConnection,
   RoomEstimate,
 } from '@/types';
+import type { CatalogSectionId } from '@/config/catalogCategories';
 
 async function parseJson<T>(response: Response): Promise<T> {
   const data = await response.json();
@@ -16,13 +18,29 @@ async function parseJson<T>(response: Response): Promise<T> {
   return data as T;
 }
 
-export async function fetchCatalog(category?: string): Promise<CatalogItem[]> {
-  const qs = category ? `?category=${encodeURIComponent(category)}` : '';
-  const res = await fetch(`/api/catalog${qs}`, { credentials: 'include' });
+export async function fetchCatalog(opts?: {
+  category?: string;
+  sections?: CatalogSectionId[];
+}): Promise<CatalogItem[]> {
+  const qs = new URLSearchParams();
+  if (opts?.category) qs.set('category', opts.category);
+  if (opts?.sections?.length) qs.set('sections', opts.sections.join(','));
+  const query = qs.toString();
+  const res = await fetch(`/api/catalog${query ? `?${query}` : ''}`, {
+    credentials: 'include',
+  });
   const data = await parseJson<{ items: CatalogItem[] }>(res);
-  return category
-    ? data.items.filter((i) => i.category === category)
+  return opts?.category
+    ? data.items.filter((i) => i.category === opts.category)
     : data.items;
+}
+
+export async function fetchCatalogByIds(itemIds: string[]): Promise<CatalogItem[]> {
+  if (itemIds.length === 0) return [];
+  const qs = new URLSearchParams({ ids: itemIds.join(',') });
+  const res = await fetch(`/api/catalog?${qs}`, { credentials: 'include' });
+  const data = await parseJson<{ items: CatalogItem[] }>(res);
+  return data.items;
 }
 
 export async function fetchProjects(): Promise<Project[]> {
@@ -74,18 +92,45 @@ export async function fetchRoom(roomId: string): Promise<Room> {
   return data.room;
 }
 
+export interface UpdateRoomResult {
+  room: Room;
+  adjustedRooms: Room[];
+}
+
 export async function updateRoom(
   roomId: string,
   patch: Partial<Pick<Room, 'name' | 'widthFt' | 'depthFt' | 'heightFt' | 'layoutX' | 'layoutZ'>>,
-): Promise<Room> {
+): Promise<UpdateRoomResult> {
   const res = await fetch(`/api/rooms/${roomId}`, {
     method: 'PUT',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   });
-  const data = await parseJson<{ room: Room }>(res);
-  return data.room;
+  const data = await parseJson<{ room: Room; adjustedRooms?: Room[] }>(res);
+  return { room: data.room, adjustedRooms: data.adjustedRooms ?? [] };
+}
+
+export async function fetchConnections(projectId: string): Promise<RoomConnection[]> {
+  const res = await fetch(`/api/projects/${projectId}/connections`, {
+    credentials: 'include',
+  });
+  const data = await parseJson<{ connections: RoomConnection[] }>(res);
+  return data.connections;
+}
+
+export async function saveConnections(
+  projectId: string,
+  connections: RoomConnection[],
+): Promise<RoomConnection[]> {
+  const res = await fetch(`/api/projects/${projectId}/connections`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ connections }),
+  });
+  const data = await parseJson<{ connections: RoomConnection[] }>(res);
+  return data.connections;
 }
 
 export async function fetchPlacements(roomId: string): Promise<Placement[]> {

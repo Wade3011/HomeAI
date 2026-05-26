@@ -1,13 +1,18 @@
 import type { CatalogItem } from '@/types';
 import { isWallCabinet } from '@/config/catalogCategories';
-import { isCountertopItem } from '@/lib/placementHeight';
+import { isBaseCabinetItem, isCountertopItem } from '@/lib/placementHeight';
 import {
+  snapBaseCabinetPosition,
+  snapWallCabinetWithNeighbors,
+} from '@/lib/cabinetNeighborSnap';
+import {
+  buildFootprints,
   catalogDimensionsFt,
   orientedDimensions,
 } from '@/components/planner/placementCollision';
 import {
   snapCountertopPosition,
-  snapWallCabinetAlongWall,
+  inferWallFromPlacement,
   type RoomWallId,
 } from '@/lib/placementSnap';
 import { raycastWallCoords } from '@/lib/wallRaycast';
@@ -22,7 +27,7 @@ import * as THREE from 'three';
 const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const floorHit = new THREE.Vector3();
 
-/** Fast snap for live drag — no overlap checks (validated on commit). */
+/** Live drag snap — cabinet neighbor snap with overlap rejection. */
 export function previewDragPosition({
   ray,
   item,
@@ -63,19 +68,37 @@ export function previewDragPosition({
   const { widthFt, depthFt } = catalogDimensionsFt(item);
   const o = orientedDimensions(widthFt, depthFt, placement.rotationY);
 
-  if (isWallCabinet(item) && lockedWall) {
-    const wallCoords = raycastWallCoords(ray, lockedWall, roomWidthFt, roomDepthFt);
+  if (isWallCabinet(item)) {
+    const wall =
+      lockedWall ??
+      inferWallFromPlacement(
+        placement.positionX,
+        placement.positionZ,
+        widthFt,
+        depthFt,
+        placement.rotationY,
+        roomWidthFt,
+        roomDepthFt,
+      );
+    const wallCoords = raycastWallCoords(ray, wall, roomWidthFt, roomDepthFt);
     if (!wallCoords) return null;
-    return snapWallCabinetAlongWall(
-      lockedWall,
-      wallCoords.clickX,
-      wallCoords.clickZ,
+    const footprints = buildFootprints(placements, catalogById);
+    return snapWallCabinetWithNeighbors({
+      clickX: wallCoords.clickX,
+      clickZ: wallCoords.clickZ,
       widthFt,
       depthFt,
-      placement.rotationY,
+      rotationY: placement.rotationY,
+      wall,
       roomWidthFt,
       roomDepthFt,
-    );
+      placements,
+      catalogById,
+      excludePlacementId: placement.placementId,
+      footprints,
+      placingItem: item,
+      gridFt: FINE_GRID_FT,
+    });
   }
 
   if (!ray.intersectPlane(floorPlane, floorHit)) return null;
@@ -93,6 +116,25 @@ export function previewDragPosition({
       roomDepthFt,
       placement.placementId,
     );
+  }
+
+  if (isBaseCabinetItem(item)) {
+    const footprints = buildFootprints(placements, catalogById);
+    return snapBaseCabinetPosition({
+      clickX: floorHit.x,
+      clickZ: floorHit.z,
+      widthFt,
+      depthFt,
+      rotationY: placement.rotationY,
+      roomWidthFt,
+      roomDepthFt,
+      placements,
+      catalogById,
+      excludePlacementId: placement.placementId,
+      footprints,
+      placingItem: item,
+      gridFt: FINE_GRID_FT,
+    });
   }
 
   const x = snapToGrid(floorHit.x - o.widthFt / 2, FINE_GRID_FT);

@@ -1,5 +1,6 @@
 import { handleApiRequest } from '@/lib/apiBackend';
 
 export async function GET(request: Request) {
-  return handleApiRequest(request, 'catalog', { method: 'GET' });
+  const { search } = new URL(request.url);
+  return handleApiRequest(request, `catalog${search}`, { method: 'GET' });
 }

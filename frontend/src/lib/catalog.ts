@@ -14,6 +14,18 @@ export function getCatalogItems(): CatalogItem[] {
   return catalog.items;
 }
 
+export function getCatalogItemsByIds(itemIds: string[]): CatalogItem[] {
+  if (itemIds.length === 0) return [];
+  const idSet = new Set(itemIds);
+  return catalog.items.filter((i) => idSet.has(i.itemId));
+}
+
+export function getCatalogItemsForSections(sections: CatalogSectionId[]): CatalogItem[] {
+  if (sections.length === 0) return [];
+  const sectionSet = new Set(sections);
+  return catalog.items.filter((i) => sectionSet.has(catalogSectionForItem(i)));
+}
+
 export function getCatalogItem(itemId: string): CatalogItem | undefined {
   return catalog.items.find((i) => i.itemId === itemId);
 }

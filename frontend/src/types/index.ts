@@ -1,15 +1,26 @@
 export type UnitSystem = 'imperial' | 'metric';
 
-export type RoomType = 'kitchen' | 'bathroom' | 'bedroom' | 'living' | 'other';
+export type RoomType = 'kitchen' | 'bathroom' | 'bedroom' | 'living' | 'hallway' | 'other';
 
-export type CustomItemShape = 'box' | 'round';
+export type CustomItemShape =
+  | 'box'
+  | 'round'
+  | 'sectional-l'
+  | 'sectional-u'
+  | 'sectional-chase';
 
 export interface CustomItemSpec {
   label: string;
   shape: CustomItemShape;
+  /** Main sofa width along the wall (inches) */
   widthIn: number;
+  /** Main seat depth (inches) */
   depthIn: number;
   heightIn: number;
+  /** Chaise / arm extension length into the room (inches) — L, U, chase */
+  sectionalRunIn?: number;
+  /** Chaise / arm width along the sofa (inches) */
+  sectionalArmDepthIn?: number;
 }
 
 export interface Project {
@@ -34,6 +45,24 @@ export interface Room {
   layoutZ?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export type RoomConnectionKind = 'open' | 'door';
+
+/** Which wall of a room meets a connected neighbor on the floor plan. */
+export type RoomWallSide = 'back' | 'front' | 'left' | 'right';
+
+/** Link between two rooms: open = wall removed, door = 3ft opening centered. */
+export interface RoomConnection {
+  connectionId: string;
+  projectId: string;
+  roomAId: string;
+  roomBId: string;
+  kind: RoomConnectionKind;
+  /** Persisted wall side for roomA — used to keep connections when rooms resize. */
+  sideA?: RoomWallSide;
+  /** Persisted wall side for roomB */
+  sideB?: RoomWallSide;
 }
 
 export interface Placement {
@@ -94,6 +123,7 @@ export interface CatalogFile {
     vanityBrands: number;
     toiletSkus?: number;
     showerSkus?: number;
+    applianceSkus?: number;
     totalSkus: number;
   };
   brands: {
@@ -102,6 +132,7 @@ export interface CatalogFile {
     vanities: CatalogBrandMeta[];
     toilets?: CatalogBrandMeta[];
     showers?: CatalogBrandMeta[];
+    appliances?: CatalogBrandMeta[];
   };
   items: CatalogItem[];
 }

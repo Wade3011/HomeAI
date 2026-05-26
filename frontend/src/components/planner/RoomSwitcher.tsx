@@ -24,6 +24,12 @@ export function RoomSwitcher({
       >
         Floor plan
       </Link>
+      <Link
+        href={`/projects/${projectId}/3d`}
+        className="rounded-lg border border-white/25 bg-white/10 px-2.5 py-1.5 text-xs font-medium backdrop-blur transition hover:bg-white/20"
+      >
+        Whole home 3D
+      </Link>
       {sorted.map((room) => {
         const preset = ROOM_TYPE_PRESETS[normalizeRoomType(room.type)];
         const active = room.roomId === currentRoomId;

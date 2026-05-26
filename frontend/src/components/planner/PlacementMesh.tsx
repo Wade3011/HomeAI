@@ -8,6 +8,7 @@ import type { ResolvedPlacementItem } from '@/lib/placementItem';
 import { isWallCabinet } from '@/config/catalogCategories';
 import { isBaseCabinetItem } from '@/lib/placementHeight';
 import { meshColorForResolved, meshEmissive } from '@/lib/planner/meshColors';
+import { CustomItemMesh } from '@/components/planner/CustomItemMesh';
 import { isCountertopItem, resolvePlacementY } from '@/lib/placementHeight';
 import { inferWallFromPlacement, type RoomWallId } from '@/lib/placementSnap';
 import {
@@ -17,7 +18,7 @@ import {
 } from '@/lib/planner/dragSession';
 import { previewDragPosition } from '@/lib/planner/dragPreview';
 import { rayFromClient } from '@/lib/planner/pointerRaycast';
-import { FINE_GRID_FT } from '@/components/planner/plannerUtils';
+import { FINE_GRID_FT, CABINET_GRID_FT } from '@/components/planner/plannerUtils';
 import {
   orientedDimensions,
   resolveCountertopPosition,
@@ -96,6 +97,8 @@ function PlacementMeshInner({
 
   const isWall = !!item && isWallCabinet(item);
   const isCounter = !!item && isCountertopItem(item);
+  const isBase = !!item && isBaseCabinetItem(item);
+  const isCabinet = isWall || isBase;
 
   const oriented = useMemo(
     () => orientedDimensions(width, depth, placement.rotationY),
@@ -157,6 +160,8 @@ function PlacementMeshInner({
       });
     }
     if (!item) return null;
+    const commitGridFt = isCabinet ? CABINET_GRID_FT : FINE_GRID_FT;
+    const commitNudgeFt = isCabinet ? 0 : COMMIT_NUDGE_FT;
     return isCounter
       ? resolveCountertopPosition({
           x,
@@ -189,8 +194,8 @@ function PlacementMeshInner({
           catalogById,
           fallbackX: p.positionX,
           fallbackZ: p.positionZ,
-          gridFt: FINE_GRID_FT,
-          nudgeFt: COMMIT_NUDGE_FT,
+          gridFt: commitGridFt,
+          nudgeFt: commitNudgeFt,
         });
   };
 
@@ -353,42 +358,59 @@ function PlacementMeshInner({
     window.addEventListener('pointercancel', onWindowUp);
   };
 
+  const pointerProps = {
+    onDoubleClick: (ev: ThreeEvent<MouseEvent>) => {
+      ev.stopPropagation();
+      endActiveDragSession();
+      onRotateRef.current();
+      invalidate();
+    },
+    onPointerDown: handlePointerDown,
+    onPointerOver: (ev: ThreeEvent<PointerEvent>) => {
+      ev.stopPropagation();
+      if (!dragging.current) {
+        gl.domElement.style.cursor =
+          countertopPlaceItem && item && isBaseCabinetItem(item) ? 'pointer' : 'grab';
+      }
+    },
+    onPointerOut: () => {
+      if (!dragging.current) gl.domElement.style.cursor = '';
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ...({ eventPriority: 1 } as any),
+  };
+
   return (
     <group ref={groupRef} position={restPosition} rotation={[0, placement.rotationY, 0]}>
-      <mesh
-        onDoubleClick={(ev) => {
-          ev.stopPropagation();
-          endActiveDragSession();
-          onRotateRef.current();
-          invalidate();
-        }}
-        onPointerDown={handlePointerDown}
-        onPointerOver={(ev) => {
-          ev.stopPropagation();
-          if (!dragging.current) {
-            gl.domElement.style.cursor =
-              countertopPlaceItem && item && isBaseCabinetItem(item) ? 'pointer' : 'grab';
-          }
-        }}
-        onPointerOut={() => {
-          if (!dragging.current) gl.domElement.style.cursor = '';
-        }}
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        {...({ eventPriority: 1 } as any)}
-      >
-        {resolved.shape === 'round' ? (
-          <cylinderGeometry
-            args={[Math.min(width, depth) / 2, Math.min(width, depth) / 2, height, 24]}
+      {resolved.isCustom && resolved.customItem ? (
+        <>
+          <CustomItemMesh
+            spec={resolved.customItem}
+            resolved={resolved}
+            selected={selected}
+            pickable={false}
           />
-        ) : (
-          <boxGeometry args={[width, height, depth]} />
-        )}
-        <meshLambertMaterial
-          color={meshColorForResolved(resolved, selected)}
-          emissive={meshEmissive(selected).color}
-          emissiveIntensity={meshEmissive(selected).intensity}
-        />
-      </mesh>
+          <mesh {...pointerProps} visible={false}>
+            <boxGeometry args={[width, height, depth]} />
+            <meshBasicMaterial transparent opacity={0} />
+          </mesh>
+        </>
+      ) : (
+        <mesh {...pointerProps}>
+          {resolved.shape === 'round' ? (
+            <cylinderGeometry
+              args={[Math.min(width, depth) / 2, Math.min(width, depth) / 2, height, 24]}
+            />
+          ) : (
+            <boxGeometry args={[width, height, depth]} />
+          )}
+          <meshLambertMaterial
+            color={meshColorForResolved(resolved, selected)}
+            emissive={meshEmissive(selected).color}
+            emissiveIntensity={meshEmissive(selected).intensity}
+          />
+        </mesh>
+      )}
     </group>
   );
 }
@@ -404,6 +426,14 @@ export const PlacementMesh = memo(PlacementMeshInner, (prev, next) => {
   if (prev.resolved.widthIn !== next.resolved.widthIn) return false;
   if (prev.resolved.depthIn !== next.resolved.depthIn) return false;
   if (prev.resolved.heightIn !== next.resolved.heightIn) return false;
+  if (prev.resolved.customItem?.sectionalRunIn !== next.resolved.customItem?.sectionalRunIn) {
+    return false;
+  }
+  if (
+    prev.resolved.customItem?.sectionalArmDepthIn !== next.resolved.customItem?.sectionalArmDepthIn
+  ) {
+    return false;
+  }
   if (prev.resolved.shape !== next.resolved.shape) return false;
   if (prev.resolved.label !== next.resolved.label) return false;
   if (prev.resolved.catalogItem?.itemId !== next.resolved.catalogItem?.itemId) return false;
