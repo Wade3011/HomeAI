@@ -8,7 +8,18 @@ import {
   type ProjectFromPresetResult,
 } from '@/lib/floorPlanPresets';
 import { KRAENZLEIN_7629_PRESET } from '@/data/floorPlanPresets/kraenzlein-7629';
-import type { ExteriorDoor, Placement, Project, Room, RoomConnection } from '@/types';
+import type {
+  ExteriorDoor,
+  Placement,
+  Project,
+  Room,
+  RoomConnection,
+  SiteSettings,
+  SiteStructure,
+  SiteStructureKind,
+} from '@/types';
+import { getSiteStructurePreset, isBuildingKind } from '@/config/siteStructurePresets';
+import { defaultSiteSettings, rectToPolygon, snapRectTowardPoint, findDrivewaySnapTarget } from '@/lib/siteLayout';
 import { ROOM_TYPE_PRESETS, normalizeRoomType } from '@/config/roomTypes';
 
 export const DEV_PROJECT_ID = 'dev-project-1';
@@ -88,11 +99,23 @@ let connections: RoomConnection[] = [
 
 let exteriorDoors: ExteriorDoor[] = [];
 
+let siteSettingsByProject = new Map<string, SiteSettings>();
+let siteStructures: SiteStructure[] = [];
+
+function initSiteForProject(projectId: string): SiteSettings {
+  const existing = siteSettingsByProject.get(projectId);
+  if (existing) return existing;
+  const site = defaultSiteSettings(projectId);
+  siteSettingsByProject = new Map(siteSettingsByProject).set(projectId, site);
+  return site;
+}
+
 function applyPresetToStore(result: ProjectFromPresetResult): ProjectFromPresetResult {
   projects = [...projects, result.project];
   rooms = [...rooms, ...result.rooms];
   connections = [...connections, ...result.connections];
   exteriorDoors = [...exteriorDoors, ...result.exteriorDoors];
+  initSiteForProject(result.project.projectId);
   return result;
 }
 
@@ -133,6 +156,8 @@ function wipeProject(projectId: string): void {
   rooms = rooms.filter((r) => r.projectId !== projectId);
   connections = connections.filter((c) => c.projectId !== projectId);
   exteriorDoors = exteriorDoors.filter((d) => d.projectId !== projectId);
+  siteSettingsByProject.delete(projectId);
+  siteStructures = siteStructures.filter((s) => s.projectId !== projectId);
   placements = placements.filter((p) => !roomIds.has(p.roomId));
 }
 
@@ -152,6 +177,9 @@ if (kraenzleinAppliedVersion !== KRAENZLEIN_PRESET_VERSION) {
   seedKraenzleinProject();
   kraenzleinAppliedVersion = KRAENZLEIN_PRESET_VERSION;
 }
+
+initSiteForProject(DEV_PROJECT_ID);
+initSiteForProject(KRAENZLEIN_PROJECT_ID);
 
 export function createProjectFromPreset(
   presetId: string,
@@ -192,6 +220,7 @@ export function createProject(name: string): Project {
     updatedAt: t,
   };
   projects = [...projects, project];
+  initSiteForProject(project.projectId);
   return project;
 }
 
@@ -218,6 +247,7 @@ export function ensureProject(projectId: string): Project | undefined {
     updatedAt: t,
   };
   projects = [...projects, project];
+  initSiteForProject(projectId);
   return project;
 }
 
@@ -364,6 +394,116 @@ export function setExteriorDoors(
     .filter((d) => d.projectId !== projectId)
     .concat(next.map((d) => ({ ...d, projectId })));
   return getExteriorDoors(projectId);
+}
+
+export function getSiteSettings(projectId: string): SiteSettings {
+  return initSiteForProject(projectId);
+}
+
+export function setSiteSettings(projectId: string, patch: Partial<SiteSettings>): SiteSettings {
+  const current = initSiteForProject(projectId);
+  const updated: SiteSettings = {
+    ...current,
+    ...patch,
+    projectId,
+    lotWidthFt: patch.lotWidthFt ?? current.lotWidthFt,
+    lotDepthFt: patch.lotDepthFt ?? current.lotDepthFt,
+  };
+  siteSettingsByProject = new Map(siteSettingsByProject).set(projectId, updated);
+  return updated;
+}
+
+export function getSiteStructures(projectId: string): SiteStructure[] {
+  initSiteForProject(projectId);
+  return siteStructures.filter((s) => s.projectId === projectId);
+}
+
+export function getSiteStructure(structureId: string): SiteStructure | undefined {
+  return siteStructures.find((s) => s.structureId === structureId);
+}
+
+export function setSiteStructures(
+  projectId: string,
+  next: SiteStructure[],
+): SiteStructure[] {
+  initSiteForProject(projectId);
+  const t = new Date().toISOString();
+  const normalized = next.map((s) => ({
+    ...s,
+    projectId,
+    updatedAt: t,
+  }));
+  siteStructures = siteStructures.filter((s) => s.projectId !== projectId).concat(normalized);
+  return getSiteStructures(projectId);
+}
+
+export interface CreateSiteStructureInput {
+  kind: SiteStructureKind;
+  name?: string;
+  centerX?: number;
+  centerZ?: number;
+  widthFt?: number;
+  depthFt?: number;
+  heightFt?: number;
+  rotationY?: number;
+  material?: SiteStructure['material'];
+  doorSide?: SiteStructure['doorSide'];
+  snapToDoors?: boolean;
+}
+
+export function createSiteStructure(
+  projectId: string,
+  input: CreateSiteStructureInput,
+): SiteStructure {
+  initSiteForProject(projectId);
+  const preset = getSiteStructurePreset(input.kind);
+  const site = getSiteSettings(projectId);
+  const widthFt = input.widthFt ?? preset.widthFt;
+  const depthFt = input.depthFt ?? preset.depthFt;
+  const heightFt = input.heightFt ?? preset.heightFt;
+
+  let centerX = input.centerX ?? site.lotWidthFt / 2 + (site.houseOffsetX ?? 0);
+  let centerZ = input.centerZ ?? site.lotDepthFt * 0.75 + (site.houseOffsetZ ?? 0);
+
+  if (input.kind === 'driveway' && input.snapToDoors !== false) {
+    const rooms = getRoomsForProject(projectId);
+    const doors = getExteriorDoors(projectId);
+    const target = findDrivewaySnapTarget(rooms, doors, centerX, centerZ);
+    if (target) {
+      const snapped = snapRectTowardPoint(centerX, centerZ, widthFt, depthFt, target.x, target.z);
+      centerX = snapped.centerX;
+      centerZ = snapped.centerZ;
+    }
+  }
+
+  const rotationY = input.rotationY ?? 0;
+  const t = new Date().toISOString();
+  const structure: SiteStructure = {
+    structureId: `site-${crypto.randomUUID()}`,
+    projectId,
+    kind: input.kind,
+    name: input.name ?? preset.name,
+    points: rectToPolygon(centerX, centerZ, widthFt, depthFt, rotationY),
+    centerX,
+    centerZ,
+    widthFt,
+    depthFt,
+    rotationY: isBuildingKind(input.kind) ? rotationY : undefined,
+    heightFt: isBuildingKind(input.kind) ? heightFt : undefined,
+    material: input.kind === 'driveway' ? (input.material ?? preset.material) : undefined,
+    doorSide: isBuildingKind(input.kind) ? (input.doorSide ?? preset.doorSide) : undefined,
+    createdAt: t,
+    updatedAt: t,
+  };
+  siteStructures = [...siteStructures, structure];
+  return structure;
+}
+
+export function deleteSiteStructure(structureId: string): { projectId: string } | undefined {
+  const structure = getSiteStructure(structureId);
+  if (!structure) return undefined;
+  siteStructures = siteStructures.filter((s) => s.structureId !== structureId);
+  return { projectId: structure.projectId };
 }
 
 export function estimateRoomTotal(roomId: string): {

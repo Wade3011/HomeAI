@@ -17,6 +17,12 @@ import {
   setConnections,
   setExteriorDoors,
   getExteriorDoors,
+  getSiteSettings,
+  setSiteSettings,
+  getSiteStructures,
+  setSiteStructures,
+  createSiteStructure,
+  deleteSiteStructure,
   updateRoom as updateRoomInStore,
 } from '@/lib/mockStore';
 import {
@@ -24,7 +30,7 @@ import {
   getCatalogItemsForSections,
 } from '@/lib/catalog';
 import type { CatalogSectionId } from '@/config/catalogCategories';
-import type { ExteriorDoor, Placement, RoomConnection } from '@/types';
+import type { ExteriorDoor, Placement, RoomConnection, SiteSettings, SiteStructure } from '@/types';
 
 function json(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -133,6 +139,47 @@ export async function handleMockApi(
             return json(200, { exteriorDoors: saved });
           }
         }
+
+        if (parts[2] === 'site') {
+          if (method === 'GET' && parts.length === 3) {
+            return json(200, {
+              site: getSiteSettings(projectId),
+              structures: getSiteStructures(projectId),
+            });
+          }
+          if (method === 'PUT' && parts.length === 3) {
+            const incoming = body.site as SiteSettings | undefined;
+            if (!incoming) {
+              return json(400, { error: 'bad_request', message: 'Missing site body' });
+            }
+            const saved = setSiteSettings(projectId, incoming);
+            return json(200, { site: saved });
+          }
+        }
+
+        if (parts[2] === 'site-structures') {
+          if (method === 'GET') {
+            return json(200, { structures: getSiteStructures(projectId) });
+          }
+          if (method === 'PUT') {
+            const incoming = (body.structures as SiteStructure[] | undefined) ?? [];
+            const saved = setSiteStructures(projectId, incoming);
+            return json(200, { structures: saved });
+          }
+          if (method === 'POST') {
+            const structure = createSiteStructure(projectId, body);
+            return json(201, { structure });
+          }
+        }
+      }
+    }
+
+    if (parts[0] === 'site-structures' && parts.length === 2) {
+      const structureId = parts[1];
+      if (method === 'DELETE') {
+        const result = deleteSiteStructure(structureId);
+        if (!result) return json(404, { error: 'not_found', message: 'Site structure not found' });
+        return json(200, { deleted: true, projectId: result.projectId });
       }
     }
 

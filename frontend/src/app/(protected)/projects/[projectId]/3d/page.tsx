@@ -11,6 +11,7 @@ import {
   fetchPlacements,
   fetchProject,
   fetchProjectRooms,
+  fetchSite,
 } from '@/lib/api';
 import { HomeScene } from '@/components/planner/HomeScene';
 import type { CatalogItem, Placement } from '@/types';
@@ -22,6 +23,7 @@ export default function ProjectHomeViewPage({
 }) {
   const { projectId } = use(params);
   const [focusRoomId, setFocusRoomId] = useState<string | null>(null);
+  const [showSite, setShowSite] = useState(false);
 
   const { data: project } = useQuery({
     queryKey: ['project', projectId],
@@ -41,6 +43,11 @@ export default function ProjectHomeViewPage({
   const { data: exteriorDoors = [] } = useQuery({
     queryKey: ['exterior-doors', projectId],
     queryFn: () => fetchExteriorDoors(projectId),
+  });
+
+  const { data: siteData } = useQuery({
+    queryKey: ['site', projectId],
+    queryFn: () => fetchSite(projectId),
   });
 
   const placementQueries = useQueries({
@@ -101,8 +108,8 @@ export default function ProjectHomeViewPage({
             {project?.name ?? 'Project'} · Whole-home view
           </h1>
           <p className="mt-1 text-sm text-stone-600">
-            See all your rooms together. Toggle to focus on one room — connected
-            rooms show as open spaces or with doorways.
+            See all your rooms together. Use Site + home to include the lot, driveway, and
+            outbuildings from your site plan.
           </p>
         </div>
       </div>
@@ -143,14 +150,19 @@ export default function ProjectHomeViewPage({
           catalogById={catalogById}
           focusRoomId={focusRoomId}
           onSelectRoom={(id) => setFocusRoomId((cur) => (cur === id ? null : id))}
+          showSite={showSite}
+          site={siteData?.site}
+          structures={siteData?.structures ?? []}
+          onToggleSite={setShowSite}
         />
       </div>
 
-      <div className="mt-4 grid gap-2 text-xs text-stone-500 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-4 grid gap-2 text-xs text-stone-500 sm:grid-cols-2 lg:grid-cols-5">
         <Legend dot="#5c7a6a" label="Open connection (wall removed)" />
         <Legend dot="#a78bfa" label="Door (3ft opening + header)" />
         <Legend dot="#d97706" label="Exterior door" />
         <Legend dot="#78716c" label="Solid wall" />
+        {showSite && <Legend dot="#6b9e6b" label="Lot / site features" />}
       </div>
     </main>
   );

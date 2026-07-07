@@ -1,4 +1,3 @@
-import { getCognitoIdToken } from '@/lib/auth';
 import { serverEnv } from '@/lib/env';
 
 export async function proxyToApi(
@@ -6,6 +5,7 @@ export async function proxyToApi(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
+  const { getCognitoIdToken } = await import('@/lib/auth');
   const token = await getCognitoIdToken(request);
   if (!token) {
     return new Response(JSON.stringify({ error: 'unauthorized', message: 'Not signed in' }), {

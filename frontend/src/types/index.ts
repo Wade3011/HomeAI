@@ -175,3 +175,63 @@ export interface RoomEstimate {
   lineItems: { placementId: string; name: string; price: number }[];
   source: string;
 }
+
+export interface SiteSettings {
+  projectId: string;
+  /** Lot width along +X (feet). */
+  lotWidthFt: number;
+  /** Lot depth along +Z (feet). */
+  lotDepthFt: number;
+  /** Optional shift of house footprint on lot (feet). */
+  houseOffsetX?: number;
+  houseOffsetZ?: number;
+  /** Lot edges that border a public street (1 = standard lot, 2 adjacent = corner lot). */
+  roadSides?: SiteRoadSide[];
+  /** Paved street width outside the lot edge (feet). */
+  roadWidthFt?: number;
+}
+
+/** Cardinal edge of the lot that faces a street (plan +X = east, +Z = south). */
+export type SiteRoadSide = 'north' | 'south' | 'east' | 'west';
+
+/** Corner where two streets meet along adjacent lot edges. */
+export type SiteCorner = 'north-west' | 'north-east' | 'south-west' | 'south-east';
+
+export type SiteStructureKind =
+  | 'driveway'
+  | 'detached-garage'
+  | 'pole-barn'
+  | 'shed';
+
+export type SitePavingMaterial = 'asphalt' | 'concrete' | 'gravel' | 'pavers';
+
+/** Point on site plan in world feet (x, z). */
+export interface SitePoint {
+  x: number;
+  z: number;
+}
+
+export interface SiteStructure {
+  structureId: string;
+  projectId: string;
+  kind: SiteStructureKind;
+  name: string;
+  /** Closed polygon footprint (MVP uses 4 points for rectangles). */
+  points: SitePoint[];
+  /** Building center — simplifies drag/rotate in the site editor. */
+  centerX?: number;
+  centerZ?: number;
+  widthFt?: number;
+  depthFt?: number;
+  /** Building rotation around Y in radians (0 = width along X). */
+  rotationY?: number;
+  heightFt?: number;
+  /** Driveway paving material. */
+  material?: SitePavingMaterial;
+  /** Building main door wall side. */
+  doorSide?: RoomWallSide;
+  /** Room used for interior planner when opening a detached building. */
+  linkedRoomId?: string;
+  createdAt: string;
+  updatedAt: string;
+}

@@ -4,7 +4,9 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { Grid, OrbitControls, Environment } from '@react-three/drei';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
-import type { CatalogItem, ExteriorDoor, Placement, Room, RoomConnection } from '@/types';
+import type { CatalogItem, ExteriorDoor, Placement, Room, RoomConnection, SiteSettings, SiteStructure } from '@/types';
+import { SiteSceneLayer } from '@/components/planner/SiteSceneLayer';
+import { computeSiteSceneBounds } from '@/lib/siteLayout';
 import { resolvePlacementItem } from '@/lib/placementItem';
 import { resolvePlacementY } from '@/lib/placementHeight';
 import { CustomItemMesh } from '@/components/planner/CustomItemMesh';
@@ -28,6 +30,10 @@ export function HomeScene({
   catalogById,
   focusRoomId,
   onSelectRoom,
+  showSite = false,
+  site,
+  structures = [],
+  onToggleSite,
 }: {
   rooms: Room[];
   connections: RoomConnection[];
@@ -36,27 +42,62 @@ export function HomeScene({
   catalogById: Record<string, CatalogItem>;
   focusRoomId: string | null;
   onSelectRoom?: (roomId: string) => void;
+  showSite?: boolean;
+  site?: SiteSettings;
+  structures?: SiteStructure[];
+  onToggleSite?: (show: boolean) => void;
 }) {
   const [showWalls, setShowWalls] = useState(true);
-  const bounds = useMemo(() => computeProjectBounds(rooms), [rooms]);
+  const houseBounds = useMemo(() => computeProjectBounds(rooms), [rooms]);
+  const sceneBounds = useMemo(() => {
+    if (showSite && site) {
+      return computeSiteSceneBounds(site, rooms, structures);
+    }
+    return houseBounds;
+  }, [showSite, site, rooms, structures, houseBounds]);
 
   useEffect(() => {
     preloadCatalogModels();
   }, []);
 
   const cameraPosition: [number, number, number] = useMemo(() => {
-    const diag = Math.hypot(bounds.widthFt, bounds.depthFt);
+    const diag = Math.hypot(sceneBounds.widthFt, sceneBounds.depthFt);
+    const lift = showSite ? 1.15 : 1;
     return [
-      bounds.centerX + diag * 0.55,
-      Math.max(diag * 0.7, 18),
-      bounds.centerZ + diag * 0.8,
+      sceneBounds.centerX + diag * 0.55 * lift,
+      Math.max(diag * 0.72 * lift, showSite ? 24 : 18),
+      sceneBounds.centerZ + diag * 0.82 * lift,
     ];
-  }, [bounds]);
+  }, [sceneBounds, showSite]);
 
-  const target: [number, number, number] = [bounds.centerX, 0, bounds.centerZ];
+  const target: [number, number, number] = [sceneBounds.centerX, 0, sceneBounds.centerZ];
 
   return (
     <div className="relative h-full min-h-[520px] w-full overflow-hidden rounded-xl border border-stone-300 bg-[#ebe8e3]">
+      <div className="absolute left-3 top-3 z-10 flex flex-wrap items-center gap-2">
+        {onToggleSite && site && (
+          <div className="flex overflow-hidden rounded-lg border border-stone-300 bg-white/95 shadow-sm backdrop-blur">
+            <button
+              type="button"
+              onClick={() => onToggleSite(false)}
+              className={`px-3 py-1.5 text-xs font-semibold transition ${
+                !showSite ? 'bg-stone-800 text-white' : 'text-stone-600 hover:bg-stone-50'
+              }`}
+            >
+              Home only
+            </button>
+            <button
+              type="button"
+              onClick={() => onToggleSite(true)}
+              className={`px-3 py-1.5 text-xs font-semibold transition ${
+                showSite ? 'bg-stone-800 text-white' : 'text-stone-600 hover:bg-stone-50'
+              }`}
+            >
+              Site + home
+            </button>
+          </div>
+        )}
+      </div>
       <WallToggleButton
         showWalls={showWalls}
         onToggle={() => setShowWalls((v) => !v)}
@@ -68,20 +109,22 @@ export function HomeScene({
         frameloop="demand"
         performance={{ min: 0.5 }}
       >
-        <color attach="background" args={['#ebe8e3']} />
-        <Environment preset="apartment" environmentIntensity={0.45} />
-        <ambientLight intensity={0.6} />
-        <directionalLight position={[20, 28, 14]} intensity={1.1} castShadow={false} />
-        <directionalLight position={[-12, 18, -8]} intensity={0.3} />
+        <color attach="background" args={[showSite ? '#c8dcc8' : '#ebe8e3']} />
+        <Environment preset={showSite ? 'park' : 'apartment'} environmentIntensity={showSite ? 0.55 : 0.45} />
+        <ambientLight intensity={showSite ? 0.72 : 0.6} />
+        <directionalLight position={[20, 28, 14]} intensity={showSite ? 1.25 : 1.1} castShadow={false} />
+        <directionalLight position={[-12, 18, -8]} intensity={showSite ? 0.35 : 0.3} />
+
+        {showSite && site ? <SiteSceneLayer site={site} structures={structures} /> : null}
 
         <Grid
-          args={[bounds.widthFt + 24, bounds.depthFt + 24]}
+          args={[sceneBounds.widthFt + (showSite ? 40 : 24), sceneBounds.depthFt + (showSite ? 40 : 24)]}
           cellSize={1}
-          sectionSize={5}
-          cellColor="#d6d3d1"
-          sectionColor="#a8a29e"
-          fadeDistance={Math.max(bounds.widthFt, bounds.depthFt) * 3}
-          position={[bounds.centerX, 0.005, bounds.centerZ]}
+          sectionSize={showSite ? 10 : 5}
+          cellColor={showSite ? '#8a9288' : '#d6d3d1'}
+          sectionColor={showSite ? '#4b5549' : '#a8a29e'}
+          fadeDistance={Math.max(sceneBounds.widthFt, sceneBounds.depthFt) * (showSite ? 4 : 3)}
+          position={[sceneBounds.centerX, 0.005, sceneBounds.centerZ]}
           raycast={() => null}
         />
 
@@ -117,7 +160,7 @@ export function HomeScene({
           dampingFactor={0.12}
           maxPolarAngle={Math.PI / 2.05}
           minDistance={4}
-          maxDistance={Math.max(bounds.widthFt, bounds.depthFt) * 6 + 20}
+          maxDistance={Math.max(sceneBounds.widthFt, sceneBounds.depthFt) * (showSite ? 8 : 6) + 20}
         />
       </Canvas>
     </div>

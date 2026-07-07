@@ -7,6 +7,9 @@ import type {
   Room,
   RoomConnection,
   RoomEstimate,
+  SiteSettings,
+  SiteStructure,
+  SiteStructureKind,
 } from '@/types';
 import type { CatalogSectionId } from '@/config/catalogCategories';
 
@@ -172,6 +175,86 @@ export async function saveExteriorDoors(
   });
   const data = await parseJson<{ exteriorDoors: ExteriorDoor[] }>(res);
   return data.exteriorDoors;
+}
+
+export interface SiteData {
+  site: SiteSettings;
+  structures: SiteStructure[];
+}
+
+export async function fetchSite(projectId: string): Promise<SiteData> {
+  const res = await fetch(`/api/projects/${projectId}/site`, { credentials: 'include' });
+  return parseJson<SiteData>(res);
+}
+
+export async function saveSiteSettings(
+  projectId: string,
+  site: SiteSettings,
+): Promise<SiteSettings> {
+  const res = await fetch(`/api/projects/${projectId}/site`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ site }),
+  });
+  const data = await parseJson<{ site: SiteSettings }>(res);
+  return data.site;
+}
+
+export async function fetchSiteStructures(projectId: string): Promise<SiteStructure[]> {
+  const res = await fetch(`/api/projects/${projectId}/site-structures`, {
+    credentials: 'include',
+  });
+  const data = await parseJson<{ structures: SiteStructure[] }>(res);
+  return data.structures;
+}
+
+export async function saveSiteStructures(
+  projectId: string,
+  structures: SiteStructure[],
+): Promise<SiteStructure[]> {
+  const res = await fetch(`/api/projects/${projectId}/site-structures`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ structures }),
+  });
+  const data = await parseJson<{ structures: SiteStructure[] }>(res);
+  return data.structures;
+}
+
+export async function createSiteStructure(
+  projectId: string,
+  input: {
+    kind: SiteStructureKind;
+    name?: string;
+    centerX?: number;
+    centerZ?: number;
+    widthFt?: number;
+    depthFt?: number;
+    heightFt?: number;
+    rotationY?: number;
+    material?: SiteStructure['material'];
+    doorSide?: SiteStructure['doorSide'];
+    snapToDoors?: boolean;
+  },
+): Promise<SiteStructure> {
+  const res = await fetch(`/api/projects/${projectId}/site-structures`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const data = await parseJson<{ structure: SiteStructure }>(res);
+  return data.structure;
+}
+
+export async function deleteSiteStructure(structureId: string): Promise<{ projectId: string }> {
+  const res = await fetch(`/api/site-structures/${structureId}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  return parseJson<{ deleted: true; projectId: string }>(res);
 }
 
 export async function fetchPlacements(roomId: string): Promise<Placement[]> {
