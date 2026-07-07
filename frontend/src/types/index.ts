@@ -57,6 +57,8 @@ export interface Room {
   /** Position on project floor plan (feet from origin) */
   layoutX?: number;
   layoutZ?: number;
+  /** Set when this room is the interior planner for a detached site structure. */
+  linkedSiteStructureId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -187,8 +189,6 @@ export interface SiteSettings {
   houseOffsetZ?: number;
   /** Lot edges that border a public street (1 = standard lot, 2 adjacent = corner lot). */
   roadSides?: SiteRoadSide[];
-  /** Paved street width outside the lot edge (feet). */
-  roadWidthFt?: number;
 }
 
 /** Cardinal edge of the lot that faces a street (plan +X = east, +Z = south). */

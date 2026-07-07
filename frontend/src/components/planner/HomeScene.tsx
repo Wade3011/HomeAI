@@ -24,6 +24,7 @@ import { preloadCatalogModels } from '@/lib/planner/catalogMeshModels';
 
 export function HomeScene({
   rooms,
+  displayRooms,
   connections,
   exteriorDoors = [],
   placementsByRoomId,
@@ -36,6 +37,8 @@ export function HomeScene({
   onToggleSite,
 }: {
   rooms: Room[];
+  /** Rooms to render in 3D; defaults to all `rooms`. Site + home view omits linked outbuilding interiors. */
+  displayRooms?: Room[];
   connections: RoomConnection[];
   exteriorDoors?: ExteriorDoor[];
   placementsByRoomId: Record<string, Placement[]>;
@@ -48,13 +51,14 @@ export function HomeScene({
   onToggleSite?: (show: boolean) => void;
 }) {
   const [showWalls, setShowWalls] = useState(true);
-  const houseBounds = useMemo(() => computeProjectBounds(rooms), [rooms]);
+  const visibleRooms = displayRooms ?? rooms;
+  const houseBounds = useMemo(() => computeProjectBounds(visibleRooms), [visibleRooms]);
   const sceneBounds = useMemo(() => {
     if (showSite && site) {
-      return computeSiteSceneBounds(site, rooms, structures);
+      return computeSiteSceneBounds(site, visibleRooms, structures);
     }
     return houseBounds;
-  }, [showSite, site, rooms, structures, houseBounds]);
+  }, [showSite, site, visibleRooms, structures, houseBounds]);
 
   useEffect(() => {
     preloadCatalogModels();
@@ -128,7 +132,7 @@ export function HomeScene({
           raycast={() => null}
         />
 
-        {rooms.map((room) => {
+        {visibleRooms.map((room) => {
           const focused = focusRoomId === null || focusRoomId === room.roomId;
           const wallPlans = planRoomWalls(room, rooms, connections, exteriorDoors);
           const placements = placementsByRoomId[room.roomId] ?? [];

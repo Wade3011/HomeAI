@@ -69,11 +69,15 @@ type Mode = 'arrange' | 'connect' | 'exterior-doors';
 
 export function FloorPlanEditor({
   projectId,
-  rooms,
+  rooms: allRooms,
 }: {
   projectId: string;
   rooms: Room[];
 }) {
+  const rooms = useMemo(
+    () => allRooms.filter((room) => !room.linkedSiteStructureId),
+    [allRooms],
+  );
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
   const [mode, setMode] = useState<Mode>('arrange');

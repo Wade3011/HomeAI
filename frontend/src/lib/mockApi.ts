@@ -23,6 +23,7 @@ import {
   setSiteStructures,
   createSiteStructure,
   deleteSiteStructure,
+  linkSiteStructurePlannerRoom,
   updateRoom as updateRoomInStore,
 } from '@/lib/mockStore';
 import {
@@ -180,6 +181,15 @@ export async function handleMockApi(
         const result = deleteSiteStructure(structureId);
         if (!result) return json(404, { error: 'not_found', message: 'Site structure not found' });
         return json(200, { deleted: true, projectId: result.projectId });
+      }
+    }
+
+    if (parts[0] === 'site-structures' && parts.length === 3 && parts[2] === 'link-room') {
+      const structureId = parts[1];
+      if (method === 'POST') {
+        const result = linkSiteStructurePlannerRoom(structureId);
+        if (!result) return json(404, { error: 'not_found', message: 'Site structure not found' });
+        return json(200, result);
       }
     }
 

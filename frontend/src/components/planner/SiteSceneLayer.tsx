@@ -4,7 +4,10 @@ import { useMemo } from 'react';
 import { SITE_STRUCTURE_PRESETS, isBuildingKind } from '@/config/siteStructurePresets';
 import { computeRoadSegments } from '@/lib/siteRoads';
 import { structureBounds } from '@/lib/siteLayout';
-import type { SitePavingMaterial, SiteSettings, SiteStructure } from '@/types';
+import type { RoomWallSide, SitePavingMaterial, SiteSettings, SiteStructure } from '@/types';
+
+const DOOR_WIDTH_FT = 3;
+const DOOR_HEIGHT_FT = 7;
 
 const DRIVEWAY_COLORS: Record<SitePavingMaterial, string> = {
   asphalt: '#3f3f46',
@@ -101,9 +104,70 @@ function BuildingMesh({ structure }: { structure: SiteStructure }) {
         <boxGeometry args={[bounds.widthFt, heightFt, bounds.depthFt]} />
         <meshStandardMaterial color={preset.planFill} roughness={0.88} metalness={0.04} />
       </mesh>
+      <BuildingDoorMesh
+        widthFt={bounds.widthFt}
+        depthFt={bounds.depthFt}
+        heightFt={heightFt}
+        doorSide={structure.doorSide ?? preset.doorSide ?? 'front'}
+      />
       <mesh position={[0, heightFt + 0.06, 0]}>
         <boxGeometry args={[bounds.widthFt + 0.15, 0.12, bounds.depthFt + 0.15]} />
         <meshStandardMaterial color="#57534e" roughness={0.9} />
+      </mesh>
+    </group>
+  );
+}
+
+function BuildingDoorMesh({
+  widthFt,
+  depthFt,
+  heightFt,
+  doorSide,
+}: {
+  widthFt: number;
+  depthFt: number;
+  heightFt: number;
+  doorSide: RoomWallSide;
+}) {
+  const doorY = Math.min(DOOR_HEIGHT_FT / 2 + 0.05, heightFt * 0.45);
+  const headerY = Math.min(DOOR_HEIGHT_FT + 0.35, heightFt - 0.15);
+  const inset = 0.04;
+  const halfW = widthFt / 2;
+  const halfD = depthFt / 2;
+
+  let position: [number, number, number] = [0, doorY, halfD - inset];
+  let headerPos: [number, number, number] = [0, headerY, halfD - inset];
+  let rotation: [number, number, number] = [0, 0, 0];
+  let headerSize: [number, number, number] = [DOOR_WIDTH_FT + 0.2, 0.18, 0.08];
+
+  switch (doorSide) {
+    case 'back':
+      position = [0, doorY, -halfD + inset];
+      headerPos = [0, headerY, -halfD + inset];
+      break;
+    case 'left':
+      position = [-halfW + inset, doorY, 0];
+      headerPos = [-halfW + inset, headerY, 0];
+      rotation = [0, Math.PI / 2, 0];
+      headerSize = [0.08, 0.18, DOOR_WIDTH_FT + 0.2];
+      break;
+    case 'right':
+      position = [halfW - inset, doorY, 0];
+      headerPos = [halfW - inset, headerY, 0];
+      rotation = [0, Math.PI / 2, 0];
+      headerSize = [0.08, 0.18, DOOR_WIDTH_FT + 0.2];
+      break;
+  }
+
+  return (
+    <group>
+      <mesh position={position} rotation={rotation} castShadow>
+        <boxGeometry args={[DOOR_WIDTH_FT, DOOR_HEIGHT_FT, 0.1]} />
+        <meshStandardMaterial color="#57534e" roughness={0.82} metalness={0.08} />
+      </mesh>
+      <mesh position={headerPos} rotation={rotation}>
+        <boxGeometry args={headerSize} />
+        <meshStandardMaterial color="#44403c" roughness={0.9} />
       </mesh>
     </group>
   );

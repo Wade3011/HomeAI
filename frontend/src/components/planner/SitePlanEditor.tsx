@@ -3,11 +3,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   createSiteStructure,
   deleteSiteStructure,
   fetchExteriorDoors,
   fetchSite,
+  linkSiteStructurePlannerRoom,
   saveSiteSettings,
   saveSiteStructures,
 } from '@/lib/api';
@@ -21,17 +23,25 @@ import {
 import {
   computeSiteBounds,
   moveStructure,
+  setStructureRotation,
   snapSiteFt,
+  findPrimaryGarageDrivewayTarget,
+  snapDrivewayToExteriorDoor,
   structureBounds,
+  structureDoorSegment,
+  structureHasRotation,
+  structureOverlapsHouse,
+  structureRotationDegrees,
+  trySnapDrivewayNearDoors,
   updateStructureRect,
 } from '@/lib/siteLayout';
-import type { Room, SiteCorner, SiteRoadSide, SiteSettings, SiteStructure, SiteStructureKind } from '@/types';
+import type { Room, RoomWallSide, SiteCorner, SiteRoadSide, SiteSettings, SiteStructure, SiteStructureKind } from '@/types';
 import { formatFeetInchesPair } from '@/lib/imperialDimensions';
 import {
   CORNER_ROAD_SIDES,
   computeRoadSegments,
   cornerFromRoadSides,
-  DEFAULT_ROAD_WIDTH_FT,
+  STANDARD_ROAD_WIDTH_FT,
   isCornerLot,
   normalizeRoadSides,
   roadSidesLabel,
@@ -61,7 +71,15 @@ type PendingBuildingSize = { widthFt: number; depthFt: number; heightFt: number 
 
 type DragKind =
   | { type: 'move'; structureId: string; startX: number; startZ: number; origCenterX: number; origCenterZ: number }
-  | { type: 'resize'; structureId: string; corner: 'se' | 'sw' | 'ne' | 'nw'; anchorMinX: number; anchorMinZ: number; anchorMaxX: number; anchorMaxZ: number };
+  | { type: 'resize'; structureId: string; corner: 'se' | 'sw' | 'ne' | 'nw'; anchorMinX: number; anchorMinZ: number; anchorMaxX: number; anchorMaxZ: number }
+  | {
+      type: 'rotate';
+      structureId: string;
+      centerX: number;
+      centerZ: number;
+      startAngle: number;
+      origRotationY: number;
+    };
 
 function clampBuildingFt(value: number, min = MIN_RECT_FT) {
   if (!Number.isFinite(value)) return min;
@@ -98,6 +116,7 @@ export function SitePlanEditor({
   rooms: Room[];
 }) {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const svgRef = useRef<SVGSVGElement>(null);
   const worldRef = useRef<SVGGElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -161,17 +180,21 @@ export function SitePlanEditor({
   const committedStructures = siteQuery.data?.structures ?? [];
   const structures = localStructures ?? committedStructures;
   const exteriorDoors = exteriorDoorsQuery.data ?? [];
+  const houseRooms = useMemo(
+    () => rooms.filter((room) => !room.linkedSiteStructureId),
+    [rooms],
+  );
 
   const bounds = useMemo(() => {
     if (!site) {
       return computeSiteBounds(
         { projectId, lotWidthFt: 120, lotDepthFt: 150 },
-        rooms,
+        houseRooms,
         structures,
       );
     }
-    return computeSiteBounds(site, rooms, structures);
-  }, [site, rooms, structures, projectId]);
+    return computeSiteBounds(site, houseRooms, structures);
+  }, [site, houseRooms, structures, projectId]);
 
   const planOriginX = bounds.minX - PLAN_PAD_FT;
   const planOriginZ = bounds.minZ - PLAN_PAD_FT;
@@ -189,6 +212,23 @@ export function SitePlanEditor({
   }, [site]);
 
   const selected = structures.find((s) => s.structureId === selectedId) ?? null;
+
+  const overlapByStructureId = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const structure of structures) {
+      if (!isBuildingKind(structure.kind)) continue;
+      const overlaps = structureOverlapsHouse(structure, houseRooms);
+      if (overlaps.length > 0) {
+        map.set(structure.structureId, overlaps);
+      }
+    }
+    return map;
+  }, [structures, houseRooms]);
+
+  const garageDrivewayTarget = useMemo(
+    () => findPrimaryGarageDrivewayTarget(houseRooms, exteriorDoors),
+    [houseRooms, exteriorDoors],
+  );
 
   const saveMutation = useMutation({
     mutationFn: (next: SiteStructure[]) => saveSiteStructures(projectId, next),
@@ -220,8 +260,27 @@ export function SitePlanEditor({
           ? { ...prev, structures: prev.structures.filter((s) => s.structureId !== structureId) }
           : prev,
       );
+      queryClient.invalidateQueries({ queryKey: ['rooms', projectId] });
       setSelectedId(null);
       setLocalStructures(null);
+    },
+  });
+
+  const linkPlannerMutation = useMutation({
+    mutationFn: linkSiteStructurePlannerRoom,
+    onSuccess: ({ structure, room }) => {
+      queryClient.setQueryData(['site', projectId], (prev: Awaited<ReturnType<typeof fetchSite>> | undefined) =>
+        prev
+          ? {
+              ...prev,
+              structures: prev.structures.map((s) =>
+                s.structureId === structure.structureId ? structure : s,
+              ),
+            }
+          : prev,
+      );
+      queryClient.invalidateQueries({ queryKey: ['rooms', projectId] });
+      router.push(`/planner/${projectId}/${room.roomId}`);
     },
   });
 
@@ -270,7 +329,7 @@ export function SitePlanEditor({
     });
   }, [mode]);
 
-  const clientToSite = useCallback((clientX: number, clientY: number) => {
+  const clientToSite = useCallback((clientX: number, clientY: number, snap = true) => {
     const svg = svgRef.current;
     const world = worldRef.current;
     if (!svg || !world) return null;
@@ -280,10 +339,9 @@ export function SitePlanEditor({
     const ctm = world.getScreenCTM()?.inverse();
     if (!ctm) return null;
     const local = pt.matrixTransform(ctm);
-    return {
-      x: snapSiteFt(local.x / PLAN_SCALE),
-      z: snapSiteFt(local.y / PLAN_SCALE),
-    };
+    const x = local.x / PLAN_SCALE;
+    const z = local.y / PLAN_SCALE;
+    return snap ? { x: snapSiteFt(x), z: snapSiteFt(z) } : { x, z };
   }, []);
 
   const patchStructures = (updater: (prev: SiteStructure[]) => SiteStructure[]) => {
@@ -308,6 +366,67 @@ export function SitePlanEditor({
       s.structureId === structure.structureId ? { ...updated, ...patch, name: patch.name ?? s.name } : s,
     );
     commitStructures(next);
+  };
+
+  const setSelectedStructureRotation = (degrees: number) => {
+    if (!selectedId) return;
+    const structure = structures.find((s) => s.structureId === selectedId);
+    if (!structure || !isBuildingKind(structure.kind)) return;
+    const normalized = ((Math.round(degrees) % 360) + 360) % 360;
+    const rotationY = (normalized * Math.PI) / 180;
+    const rotated = setStructureRotation(structure, rotationY);
+    commitStructures(
+      structures.map((s) => (s.structureId === structure.structureId ? rotated : s)),
+    );
+  };
+
+  const nudgeSelectedStructureRotation = (deltaDeg: number) => {
+    if (!selectedId) return;
+    const structure = structures.find((s) => s.structureId === selectedId);
+    if (!structure) return;
+    const current = structureRotationDegrees(structure);
+    setSelectedStructureRotation(current + deltaDeg);
+  };
+
+  const duplicateStructure = (structure: SiteStructure) => {
+    const b = structureBounds(structure);
+    if (!b) return;
+    const offsetFt = 4;
+    createMutation.mutate({
+      kind: structure.kind,
+      name: `${structure.name} (copy)`,
+      centerX: (structure.centerX ?? b.centerX) + offsetFt,
+      centerZ: (structure.centerZ ?? b.centerZ) + offsetFt,
+      widthFt: structure.widthFt ?? b.widthFt,
+      depthFt: structure.depthFt ?? b.depthFt,
+      heightFt: structure.heightFt,
+      rotationY: structure.rotationY,
+      material: structure.material,
+      doorSide: structure.doorSide,
+      snapToDoors: false,
+    });
+  };
+
+  const addDrivewayToGarage = () => {
+    if (!garageDrivewayTarget) return;
+    const preset = SITE_STRUCTURE_PRESETS.driveway;
+    const widthFt = preset.widthFt;
+    const depthFt = preset.depthFt;
+    const { centerX, centerZ } = snapDrivewayToExteriorDoor(
+      garageDrivewayTarget.room,
+      garageDrivewayTarget.door,
+      widthFt,
+      depthFt,
+    );
+    createMutation.mutate({
+      kind: 'driveway',
+      name: 'Driveway',
+      centerX,
+      centerZ,
+      widthFt,
+      depthFt,
+      snapToDoors: false,
+    });
   };
 
   const placeBuildingAt = (kind: SiteStructureKind, pt: { x: number; z: number }) => {
@@ -510,6 +629,19 @@ export function SitePlanEditor({
           }
         }),
       );
+      return;
+    }
+
+    if (drag.type === 'rotate') {
+      const raw = clientToSite(e.clientX, e.clientY, false);
+      if (!raw) return;
+      const angle = Math.atan2(raw.x - drag.centerX, raw.z - drag.centerZ);
+      const rotationY = drag.origRotationY - (angle - drag.startAngle);
+      patchStructures((prev) =>
+        prev.map((s) =>
+          s.structureId === drag.structureId ? setStructureRotation(s, rotationY) : s,
+        ),
+      );
     }
   };
 
@@ -530,7 +662,18 @@ export function SitePlanEditor({
     }
 
     if (drag) {
-      commitStructures(localStructures ?? structures);
+      let next = localStructures ?? structures;
+      if (drag.type === 'move') {
+        const moved = next.find((s) => s.structureId === drag.structureId);
+        if (moved?.kind === 'driveway') {
+          next = next.map((s) =>
+            s.structureId === moved.structureId
+              ? trySnapDrivewayNearDoors(moved, houseRooms, exteriorDoors)
+              : s,
+          );
+        }
+      }
+      commitStructures(next);
       setDrag(null);
     }
   };
@@ -551,6 +694,27 @@ export function SitePlanEditor({
       startZ: pt.z,
       origCenterX: b.centerX,
       origCenterZ: b.centerZ,
+    });
+  };
+
+  const startRotate = (structure: SiteStructure, e: React.PointerEvent) => {
+    if (mode !== 'select' || e.button !== 0) return;
+    e.stopPropagation();
+    const pt = clientToSite(e.clientX, e.clientY, false);
+    if (!pt) return;
+    const b = structureBounds(structure);
+    if (!b) return;
+    const centerX = structure.centerX ?? b.centerX;
+    const centerZ = structure.centerZ ?? b.centerZ;
+    setSelectedId(structure.structureId);
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    setDrag({
+      type: 'rotate',
+      structureId: structure.structureId,
+      centerX,
+      centerZ,
+      startAngle: Math.atan2(pt.x - centerX, pt.z - centerZ),
+      origRotationY: structure.rotationY ?? 0,
     });
   };
 
@@ -598,6 +762,7 @@ export function SitePlanEditor({
           saving={saveMutation.isPending}
           onSelect={setSelectedId}
           onRemove={(structureId) => deleteMutation.mutate(structureId)}
+          onDuplicate={duplicateStructure}
           onResize={patchStructure}
         />
       )}
@@ -629,6 +794,20 @@ export function SitePlanEditor({
               description="Paved path"
               color="#4b5563"
             />
+            <button
+              type="button"
+              onClick={addDrivewayToGarage}
+              disabled={!garageDrivewayTarget || createMutation.isPending}
+              title={
+                garageDrivewayTarget
+                  ? 'Place a standard driveway aligned to the garage door'
+                  : 'Add a garage or porch with an exterior door first'
+              }
+              className="rounded-xl border border-stone-300 bg-white px-3 py-2 text-left shadow-sm transition hover:border-stone-400 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span className="block text-sm font-semibold text-stone-800">Driveway to garage</span>
+              <span className="block text-[11px] text-stone-500">One-click · 12 × 24 ft</span>
+            </button>
             <AddFeatureButton
               active={mode === 'add-detached-garage'}
               onClick={() => setMode('add-detached-garage')}
@@ -664,14 +843,24 @@ export function SitePlanEditor({
 
         <div className="flex flex-wrap items-center gap-1.5">
           {selected && mode === 'select' && (
-            <button
-              type="button"
-              onClick={() => deleteMutation.mutate(selected.structureId)}
-              disabled={deleteMutation.isPending}
-              className="mr-1 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
-            >
-              {deleteMutation.isPending ? 'Removing…' : `Remove ${selected.name}`}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => duplicateStructure(selected)}
+                disabled={createMutation.isPending}
+                className="mr-1 rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 hover:bg-stone-50 disabled:opacity-50"
+              >
+                Duplicate
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteMutation.mutate(selected.structureId)}
+                disabled={deleteMutation.isPending}
+                className="mr-1 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
+              >
+                {deleteMutation.isPending ? 'Removing…' : `Remove ${selected.name}`}
+              </button>
+            </>
           )}
           <ViewControlButton onClick={() => setViewZoom((z) => clampZoom(z / 1.2))} title="Zoom out">
             −
@@ -840,7 +1029,7 @@ export function SitePlanEditor({
                   onPointerDown={onCanvasPointerDown}
                 />
 
-                {rooms.map((room) => (
+                {houseRooms.map((room) => (
                   <rect
                     key={room.roomId}
                     x={(room.layoutX ?? 0) * PLAN_SCALE}
@@ -856,7 +1045,7 @@ export function SitePlanEditor({
                 ))}
 
                 {exteriorDoors.map((door) => {
-                  const room = rooms.find((r) => r.roomId === door.roomId);
+                  const room = houseRooms.find((r) => r.roomId === door.roomId);
                   if (!room) return null;
                   const lx = (room.layoutX ?? 0) * PLAN_SCALE;
                   const lz = (room.layoutZ ?? 0) * PLAN_SCALE;
@@ -899,21 +1088,68 @@ export function SitePlanEditor({
                   if (!b) return null;
                   const preset = SITE_STRUCTURE_PRESETS[structure.kind];
                   const isSelected = selectedId === structure.structureId;
+                  const isBuilding = isBuildingKind(structure.kind);
+                  const overlapRooms = overlapByStructureId.get(structure.structureId);
+                  const polygonPoints = structure.points
+                    .map((p) => `${p.x * PLAN_SCALE},${p.z * PLAN_SCALE}`)
+                    .join(' ');
+                  const door = isBuilding ? structureDoorSegment(structure) : null;
+                  const rotationHandle = (() => {
+                    if (!door || !isSelected) return null;
+                    const mx = (door.a.x + door.b.x) / 2;
+                    const mz = (door.a.z + door.b.z) / 2;
+                    const cx = b.centerX;
+                    const cz = b.centerZ;
+                    const dx = mx - cx;
+                    const dz = mz - cz;
+                    const len = Math.hypot(dx, dz) || 1;
+                    return {
+                      x: mx + (dx / len) * 2.5,
+                      z: mz + (dz / len) * 2.5,
+                    };
+                  })();
+
                   return (
                     <g key={structure.structureId}>
-                      <rect
-                        x={b.minX * PLAN_SCALE}
-                        y={b.minZ * PLAN_SCALE}
-                        width={b.widthFt * PLAN_SCALE}
-                        height={b.depthFt * PLAN_SCALE}
-                        fill={preset.planFill}
-                        fillOpacity={isSelected ? 0.92 : 0.78}
-                        stroke={isSelected ? '#1c1917' : preset.planStroke}
-                        strokeWidth={isSelected ? 2 : 1.2}
-                        className={mode === 'select' ? 'cursor-grab' : undefined}
-                        style={{ pointerEvents: mode.startsWith('add-') || mode === 'pan' ? 'none' : 'auto' }}
-                        onPointerDown={(e) => startMove(structure, e)}
-                      />
+                      {isBuilding ? (
+                        <polygon
+                          points={polygonPoints}
+                          fill={preset.planFill}
+                          fillOpacity={isSelected ? 0.92 : 0.78}
+                          stroke={overlapRooms ? '#dc2626' : isSelected ? '#1c1917' : preset.planStroke}
+                          strokeWidth={isSelected || overlapRooms ? 2 : 1.2}
+                          strokeDasharray={overlapRooms ? '6 4' : undefined}
+                          className={mode === 'select' ? 'cursor-grab' : undefined}
+                          style={{ pointerEvents: mode.startsWith('add-') || mode === 'pan' ? 'none' : 'auto' }}
+                          onPointerDown={(e) => startMove(structure, e)}
+                        />
+                      ) : (
+                        <rect
+                          x={b.minX * PLAN_SCALE}
+                          y={b.minZ * PLAN_SCALE}
+                          width={b.widthFt * PLAN_SCALE}
+                          height={b.depthFt * PLAN_SCALE}
+                          fill={preset.planFill}
+                          fillOpacity={isSelected ? 0.92 : 0.78}
+                          stroke={isSelected ? '#1c1917' : preset.planStroke}
+                          strokeWidth={isSelected ? 2 : 1.2}
+                          className={mode === 'select' ? 'cursor-grab' : undefined}
+                          style={{ pointerEvents: mode.startsWith('add-') || mode === 'pan' ? 'none' : 'auto' }}
+                          onPointerDown={(e) => startMove(structure, e)}
+                        />
+                      )}
+                      {door && (
+                        <line
+                          x1={door.a.x * PLAN_SCALE}
+                          y1={door.a.z * PLAN_SCALE}
+                          x2={door.b.x * PLAN_SCALE}
+                          y2={door.b.z * PLAN_SCALE}
+                          stroke="#d97706"
+                          strokeWidth={2.5}
+                          strokeLinecap="round"
+                          pointerEvents="none"
+                        />
+                      )}
                       <text
                         x={b.centerX * PLAN_SCALE}
                         y={b.centerZ * PLAN_SCALE}
@@ -926,8 +1162,33 @@ export function SitePlanEditor({
                       >
                         {structure.name}
                       </text>
+                      {isSelected && mode === 'select' && rotationHandle && isBuilding && (
+                        <g
+                          transform={`translate(${rotationHandle.x * PLAN_SCALE}, ${rotationHandle.z * PLAN_SCALE})`}
+                        >
+                          <circle
+                            r={11}
+                            fill="#ffffff"
+                            stroke="#1c1917"
+                            strokeWidth={1.2}
+                            className="cursor-grab active:cursor-grabbing"
+                            onPointerDown={(e) => startRotate(structure, e)}
+                          />
+                          <text
+                            y={3}
+                            textAnchor="middle"
+                            fontSize={10}
+                            fontWeight="bold"
+                            fill="#1c1917"
+                            pointerEvents="none"
+                          >
+                            ↻
+                          </text>
+                        </g>
+                      )}
                       {isSelected &&
                         mode === 'select' &&
+                        !structureHasRotation(structure) &&
                         (['nw', 'ne', 'sw', 'se'] as const).map((corner) => {
                           const hx = (corner.includes('w') ? b.minX : b.maxX) * PLAN_SCALE;
                           const hz = (corner.includes('n') ? b.minZ : b.maxZ) * PLAN_SCALE;
@@ -987,8 +1248,14 @@ export function SitePlanEditor({
             preset={SITE_STRUCTURE_PRESETS[selected.kind]}
             saving={saveMutation.isPending}
             deleting={deleteMutation.isPending}
+            linking={linkPlannerMutation.isPending}
             onChange={(patch) => patchStructure(selected, patch)}
+            onSetRotation={setSelectedStructureRotation}
+            onNudgeRotation={nudgeSelectedStructureRotation}
+            onOpenPlanner={() => linkPlannerMutation.mutate(selected.structureId)}
             onDelete={() => deleteMutation.mutate(selected.structureId)}
+            onDuplicate={() => duplicateStructure(selected)}
+            overlapRooms={overlapByStructureId.get(selected.structureId) ?? []}
           />
         )}
       </div>
@@ -1003,6 +1270,7 @@ function SiteFeaturesList({
   saving,
   onSelect,
   onRemove,
+  onDuplicate,
   onResize,
 }: {
   structures: SiteStructure[];
@@ -1011,6 +1279,7 @@ function SiteFeaturesList({
   saving: boolean;
   onSelect: (structureId: string) => void;
   onRemove: (structureId: string) => void;
+  onDuplicate: (structure: SiteStructure) => void;
   onResize: (structure: SiteStructure, patch: Partial<SiteStructure>) => void;
 }) {
   return (
@@ -1058,6 +1327,13 @@ function SiteFeaturesList({
                       </>
                     )}
                   </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDuplicate(structure)}
+                  className="shrink-0 rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-stone-700 hover:bg-stone-50"
+                >
+                  Duplicate
                 </button>
                 <button
                   type="button"
@@ -1260,7 +1536,6 @@ function SiteOverviewPanel({
   const lotWidthFt = site?.lotWidthFt ?? 120;
   const lotDepthFt = site?.lotDepthFt ?? 150;
   const roadSides = normalizeRoadSides(site?.roadSides);
-  const roadWidthFt = site?.roadWidthFt ?? DEFAULT_ROAD_WIDTH_FT;
   const corner = cornerFromRoadSides(roadSides);
   const frontageMode = isCornerLot(roadSides) ? 'corner' : 'standard';
 
@@ -1271,14 +1546,6 @@ function SiteOverviewPanel({
     const current = field === 'lotWidthFt' ? lotWidthFt : lotDepthFt;
     if (next === current) return;
     onSave({ [field]: next });
-  };
-
-  const commitRoadWidth = (raw: string) => {
-    const parsed = Number(raw);
-    if (!Number.isFinite(parsed)) return;
-    const next = Math.max(16, Math.round(parsed));
-    if (next === roadWidthFt) return;
-    onSave({ roadWidthFt: next });
   };
 
   return (
@@ -1380,19 +1647,9 @@ function SiteOverviewPanel({
           </div>
         )}
 
-        <label className="mt-3 block max-w-[10rem] text-xs text-stone-600">
-          Road width (ft)
-          <input
-            key={`road-w-${roadWidthFt}`}
-            type="number"
-            min={16}
-            step={1}
-            defaultValue={roadWidthFt}
-            disabled={!site || saving}
-            onBlur={(e) => commitRoadWidth(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-stone-300 px-2 py-1.5 text-sm disabled:bg-stone-50"
-          />
-        </label>
+        <p className="mt-3 text-xs text-stone-500">
+          Street width is fixed at {STANDARD_ROAD_WIDTH_FT} ft.
+        </p>
       </div>
 
       <p className="mt-3 text-[11px] text-stone-500">
@@ -1489,25 +1746,46 @@ function SiteStructurePanel({
   preset,
   saving,
   deleting,
+  linking,
   onChange,
+  onSetRotation,
+  onNudgeRotation,
+  onOpenPlanner,
   onDelete,
+  onDuplicate,
+  overlapRooms = [],
 }: {
   structure: SiteStructure;
   preset: SiteStructurePreset;
   saving: boolean;
   deleting: boolean;
+  linking: boolean;
   onChange: (patch: Partial<SiteStructure>) => void;
+  onSetRotation: (degrees: number) => void;
+  onNudgeRotation: (deltaDeg: number) => void;
+  onOpenPlanner: () => void;
   onDelete: () => void;
+  onDuplicate: () => void;
+  overlapRooms?: string[];
 }) {
   const b = structureBounds(structure);
   const widthFt = structure.widthFt ?? b?.widthFt ?? preset.widthFt;
   const depthFt = structure.depthFt ?? b?.depthFt ?? preset.depthFt;
   const heightFt = structure.heightFt ?? preset.heightFt ?? 10;
   const isBuilding = isBuildingKind(structure.kind);
+  const rotationDeg = structureRotationDegrees(structure);
 
   return (
     <div className="w-full shrink-0 rounded-2xl border border-stone-200 bg-white p-4 shadow-sm lg:w-72">
       <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">{preset.label}</p>
+
+      {overlapRooms.length > 0 && (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          Overlaps house footprint: {overlapRooms.join(', ')}. Move the building so it sits fully on
+          the lot, outside the home.
+        </div>
+      )}
+
       <label className="mt-3 block text-xs text-stone-600">
         Name
         <input
@@ -1537,7 +1815,79 @@ function SiteStructurePanel({
             }
           />
         </div>
+        {isBuilding && structureHasRotation(structure) && (
+          <p className="mt-2 text-[11px] text-amber-700">
+            Corner handles are disabled while rotated — use the size fields above, or set rotation to
+            0° to resize on canvas.
+          </p>
+        )}
       </div>
+
+      {isBuilding && (
+        <>
+          <div className="mt-3">
+            <p className="text-xs font-medium text-stone-600">Rotation</p>
+            <div className="mt-2 flex items-center gap-2">
+              <ViewControlButton onClick={() => onNudgeRotation(-5)} title="Rotate 5° counter-clockwise">
+                ↺
+              </ViewControlButton>
+              <input
+                type="range"
+                min={0}
+                max={359}
+                value={rotationDeg}
+                onChange={(e) => onSetRotation(Number(e.target.value))}
+                className="min-w-0 flex-1"
+              />
+              <ViewControlButton onClick={() => onNudgeRotation(5)} title="Rotate 5° clockwise">
+                ↻
+              </ViewControlButton>
+            </div>
+            <label className="mt-2 flex items-center gap-2 text-xs text-stone-600">
+              Angle
+              <input
+                type="number"
+                min={0}
+                max={359}
+                value={rotationDeg}
+                onChange={(e) => onSetRotation(Number(e.target.value))}
+                className="w-16 rounded-lg border border-stone-300 px-2 py-1 text-sm"
+              />
+              <span>°</span>
+            </label>
+            <p className="mt-1 text-[11px] text-stone-500">
+              Drag the ↻ handle on the plan for free rotation (0–359°).
+            </p>
+          </div>
+
+          <label className="mt-3 block text-xs text-stone-600">
+            Main door wall
+            <select
+              defaultValue={structure.doorSide ?? preset.doorSide ?? 'front'}
+              onChange={(e) => onChange({ doorSide: e.target.value as RoomWallSide })}
+              className="mt-1 w-full rounded-lg border border-stone-300 px-2 py-1.5 text-sm"
+            >
+              <option value="front">Front</option>
+              <option value="back">Back</option>
+              <option value="left">Left</option>
+              <option value="right">Right</option>
+            </select>
+          </label>
+
+          <button
+            type="button"
+            onClick={onOpenPlanner}
+            disabled={linking || saving}
+            className="mt-4 w-full rounded-lg bg-[var(--sage-700)] px-3 py-2 text-sm font-semibold text-white hover:bg-[var(--sage-800)] disabled:opacity-50"
+          >
+            {linking
+              ? 'Opening planner…'
+              : structure.linkedRoomId
+                ? 'Open in 3D planner'
+                : 'Create & open in 3D planner'}
+          </button>
+        </>
+      )}
 
       {structure.kind === 'driveway' && (
         <label className="mt-3 block text-xs text-stone-600">
@@ -1562,9 +1912,17 @@ function SiteStructurePanel({
       </p>
       <button
         type="button"
+        onClick={onDuplicate}
+        disabled={saving}
+        className="mt-3 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50 disabled:opacity-50"
+      >
+        Duplicate
+      </button>
+      <button
+        type="button"
         onClick={onDelete}
         disabled={deleting || saving}
-        className="mt-4 w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
+        className="mt-2 w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
       >
         {deleting ? 'Removing…' : 'Remove from site'}
       </button>

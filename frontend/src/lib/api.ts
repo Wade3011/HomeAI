@@ -257,6 +257,16 @@ export async function deleteSiteStructure(structureId: string): Promise<{ projec
   return parseJson<{ deleted: true; projectId: string }>(res);
 }
 
+export async function linkSiteStructurePlannerRoom(
+  structureId: string,
+): Promise<{ structure: SiteStructure; room: Room }> {
+  const res = await fetch(`/api/site-structures/${structureId}/link-room`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  return parseJson<{ structure: SiteStructure; room: Room }>(res);
+}
+
 export async function fetchPlacements(roomId: string): Promise<Placement[]> {
   const res = await fetch(`/api/rooms/${roomId}/placements`, { credentials: 'include' });
   const data = await parseJson<{ placements: Placement[] }>(res);

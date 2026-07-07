@@ -35,6 +35,12 @@ export default function ProjectHomeViewPage({
     queryFn: () => fetchProjectRooms(projectId),
   });
 
+  const houseRooms = useMemo(
+    () => rooms.filter((room) => !room.linkedSiteStructureId),
+    [rooms],
+  );
+  const focusRooms = showSite ? houseRooms : rooms;
+
   const { data: connections = [] } = useQuery({
     queryKey: ['connections', projectId],
     queryFn: () => fetchConnections(projectId),
@@ -123,7 +129,7 @@ export default function ProjectHomeViewPage({
           onClick={() => setFocusRoomId(null)}
           label="All rooms"
         />
-        {rooms.map((room) => (
+        {focusRooms.map((room) => (
           <FocusChip
             key={room.roomId}
             active={focusRoomId === room.roomId}
@@ -144,6 +150,7 @@ export default function ProjectHomeViewPage({
       <div className="h-[70vh]">
         <HomeScene
           rooms={rooms}
+          displayRooms={showSite ? houseRooms : rooms}
           connections={connections}
           exteriorDoors={exteriorDoors}
           placementsByRoomId={placementsByRoomId}

@@ -1,6 +1,10 @@
 import type { SiteCorner, SiteRoadSide, SiteSettings } from '@/types';
 
-export const DEFAULT_ROAD_WIDTH_FT = 28;
+/** Standard paved street width (feet). Not user-editable. */
+export const STANDARD_ROAD_WIDTH_FT = 28;
+
+/** @deprecated Use STANDARD_ROAD_WIDTH_FT */
+export const DEFAULT_ROAD_WIDTH_FT = STANDARD_ROAD_WIDTH_FT;
 
 export const CORNER_ROAD_SIDES: Record<SiteCorner, SiteRoadSide[]> = {
   'north-west': ['north', 'west'],
@@ -48,7 +52,7 @@ export function roadSidesLabel(sides?: SiteRoadSide[]): string {
 
 /** Axis-aligned road pavement strips outside the lot boundary. */
 export function computeRoadSegments(site: SiteSettings): SiteRoadSegment[] {
-  const roadWidth = site.roadWidthFt ?? DEFAULT_ROAD_WIDTH_FT;
+  const roadWidth = STANDARD_ROAD_WIDTH_FT;
   const sides = normalizeRoadSides(site.roadSides);
   const ox = site.houseOffsetX ?? 0;
   const oz = site.houseOffsetZ ?? 0;

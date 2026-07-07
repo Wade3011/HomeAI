@@ -19,7 +19,7 @@ import type {
   SiteStructureKind,
 } from '@/types';
 import { getSiteStructurePreset, isBuildingKind } from '@/config/siteStructurePresets';
-import { defaultSiteSettings, rectToPolygon, snapRectTowardPoint, findDrivewaySnapTarget } from '@/lib/siteLayout';
+import { defaultSiteSettings, findNearestDrivewaySnapTarget, rectToPolygon, roomTypeForSiteStructure, snapDrivewayToExteriorDoor, structureBounds } from '@/lib/siteLayout';
 import { ROOM_TYPE_PRESETS, normalizeRoomType } from '@/config/roomTypes';
 
 export const DEV_PROJECT_ID = 'dev-project-1';
@@ -269,6 +269,7 @@ export function createRoom(projectId: string, input: Partial<Room>): Room {
     heightFt: input.heightFt ?? preset.heightFt,
     layoutX: input.layoutX ?? 0,
     layoutZ: input.layoutZ ?? 0,
+    linkedSiteStructureId: input.linkedSiteStructureId,
     createdAt: t,
     updatedAt: t,
   };
@@ -434,7 +435,76 @@ export function setSiteStructures(
     updatedAt: t,
   }));
   siteStructures = siteStructures.filter((s) => s.projectId !== projectId).concat(normalized);
+  for (const structure of normalized) {
+    if (structure.linkedRoomId && isBuildingKind(structure.kind)) {
+      syncLinkedPlannerRoom(structure);
+    }
+  }
   return getSiteStructures(projectId);
+}
+
+function syncLinkedPlannerRoom(structure: SiteStructure) {
+  if (!structure.linkedRoomId) return;
+  const room = getRoom(structure.linkedRoomId);
+  if (!room) return;
+  const b = structureBounds(structure);
+  if (!b) return;
+  const widthFt = structure.widthFt ?? b.widthFt;
+  const depthFt = structure.depthFt ?? b.depthFt;
+  const centerX = structure.centerX ?? b.centerX;
+  const centerZ = structure.centerZ ?? b.centerZ;
+  updateRoom(structure.linkedRoomId, {
+    name: `${structure.name} (interior)`,
+    widthFt,
+    depthFt,
+    heightFt: structure.heightFt ?? room.heightFt,
+    layoutX: centerX - widthFt / 2,
+    layoutZ: centerZ - depthFt / 2,
+  });
+}
+
+export function linkSiteStructurePlannerRoom(
+  structureId: string,
+): { structure: SiteStructure; room: Room } | undefined {
+  const structure = getSiteStructure(structureId);
+  if (!structure || !isBuildingKind(structure.kind)) return undefined;
+
+  if (structure.linkedRoomId) {
+    const existing = getRoom(structure.linkedRoomId);
+    if (existing) {
+      syncLinkedPlannerRoom(structure);
+      return { structure: getSiteStructure(structureId)!, room: getRoom(structure.linkedRoomId)! };
+    }
+  }
+
+  const b = structureBounds(structure);
+  if (!b) return undefined;
+  const widthFt = structure.widthFt ?? b.widthFt;
+  const depthFt = structure.depthFt ?? b.depthFt;
+  const centerX = structure.centerX ?? b.centerX;
+  const centerZ = structure.centerZ ?? b.centerZ;
+
+  const room = createRoom(structure.projectId, {
+    type: roomTypeForSiteStructure(structure.kind),
+    name: `${structure.name} (interior)`,
+    widthFt,
+    depthFt,
+    heightFt: structure.heightFt ?? getSiteStructurePreset(structure.kind).heightFt ?? 10,
+    layoutX: centerX - widthFt / 2,
+    layoutZ: centerZ - depthFt / 2,
+    linkedSiteStructureId: structure.structureId,
+  });
+
+  const t = new Date().toISOString();
+  const updated: SiteStructure = {
+    ...structure,
+    linkedRoomId: room.roomId,
+    updatedAt: t,
+  };
+  siteStructures = siteStructures.map((s) =>
+    s.structureId === structureId ? updated : s,
+  );
+  return { structure: updated, room };
 }
 
 export interface CreateSiteStructureInput {
@@ -468,9 +538,14 @@ export function createSiteStructure(
   if (input.kind === 'driveway' && input.snapToDoors !== false) {
     const rooms = getRoomsForProject(projectId);
     const doors = getExteriorDoors(projectId);
-    const target = findDrivewaySnapTarget(rooms, doors, centerX, centerZ);
+    const target = findNearestDrivewaySnapTarget(rooms, doors, centerX, centerZ);
     if (target) {
-      const snapped = snapRectTowardPoint(centerX, centerZ, widthFt, depthFt, target.x, target.z);
+      const snapped = snapDrivewayToExteriorDoor(
+        target.room,
+        target.door,
+        widthFt,
+        depthFt,
+      );
       centerX = snapped.centerX;
       centerZ = snapped.centerZ;
     }
@@ -502,6 +577,9 @@ export function createSiteStructure(
 export function deleteSiteStructure(structureId: string): { projectId: string } | undefined {
   const structure = getSiteStructure(structureId);
   if (!structure) return undefined;
+  if (structure.linkedRoomId) {
+    deleteRoom(structure.linkedRoomId);
+  }
   siteStructures = siteStructures.filter((s) => s.structureId !== structureId);
   return { projectId: structure.projectId };
 }
