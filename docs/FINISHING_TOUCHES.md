@@ -2,7 +2,7 @@
 
 Living changelog for work **not yet done** after the site/exterior v1 build (Phases 0–4). Check items off as you ship them.
 
-Related plans: [EXTERIOR.md](./EXTERIOR.md) · [CEILINGS.md](./CEILINGS.md) · [AWS_SERVICES.md](./AWS_SERVICES.md)
+Related plans: [HOME_AI_TRACKER.md](./HOME_AI_TRACKER.md) · [AWS_SERVICES.md](./AWS_SERVICES.md)
 
 ---
 
@@ -12,7 +12,7 @@ These were in Phase 4 but intentionally deferred.
 
 - [ ] **Undo for site edits** — revert last move, resize, rotate, add, or delete (stretch goal; no history stack today)
 - [ ] **Production persistence** — site settings + structures in Lambda/DynamoDB (still mock-only via `mockStore.ts` / `mockApi.ts`)
-  - [ ] Extend DynamoDB project record (Option A in EXTERIOR.md) or add `SiteStructures` table
+  - [ ] Extend DynamoDB project record (Option A embed on project — see HOME_AI_TRACKER) or add `SiteStructures` table
   - [ ] Add API Gateway routes: `GET/PUT /projects/{id}/site`, site-structures CRUD, `POST …/link-room`
   - [ ] Wire BFF routes to real backend when `DEV_SKIP_AUTH` is off
   - [ ] Cascade delete site data on project delete
@@ -21,7 +21,6 @@ These were in Phase 4 but intentionally deferred.
 
 ## Exterior — docs & QA
 
-- [ ] **Update [EXTERIOR.md](./EXTERIOR.md) checkboxes** — mark Phases 0–4 items complete; note extras shipped (roads, free 360° rotation, editable lot, Site + home 3D toggle, etc.)
 - [ ] **Manual test pass** (dev, Kraenzlein or similar project):
   - [ ] Create project → default lot (120×150) loads
   - [ ] Add driveway → reload → persisted
@@ -38,7 +37,7 @@ These were in Phase 4 but intentionally deferred.
 
 ## Exterior — future (post v1)
 
-From EXTERIOR.md **Future (not v1)** — not required for first ship.
+From HOME_AI_TRACKER exterior future — not required for first ship.
 
 - [ ] L-shaped / polyline driveways (polygon schema already supports more than 4 points)
 - [ ] Walkways, patios, lawn zones
@@ -62,7 +61,7 @@ From EXTERIOR.md **Future (not v1)** — not required for first ship.
 
 ## Ceilings feature (separate track)
 
-Full plan in [CEILINGS.md](./CEILINGS.md). Not started.
+Full plan in [HOME_AI_TRACKER.md](./HOME_AI_TRACKER.md) Part B. Not started.
 
 - [ ] Phase 0 — types, mock store, API, presets
 - [ ] Phase 1 — room ceiling fields in floor plan / room panel

@@ -1,4 +1,4 @@
-import type { RoomType } from '@/types';
+import type { CeilingType, RidgeAxis, RoomType, StoryDef } from '@/types';
 import { archFt } from '@/lib/imperialDimensions';
 
 /** Room footprint from BZAK 30' wide plan — exact stud-face dimensions from sheet. */
@@ -10,7 +10,13 @@ export interface FloorPlanPresetRoomDef {
   depthFt: number;
   layoutX: number;
   layoutZ: number;
+  /** Wall / eave height. */
   heightFt?: number;
+  ceilingType?: CeilingType;
+  peakHeightFt?: number;
+  ridgeAxis?: RidgeAxis;
+  /** Defaults to Main (0). Use for loft / upper / basement rooms. */
+  storyIndex?: number;
 }
 
 export interface FloorPlanPresetConnectionDef {
@@ -32,13 +38,16 @@ export interface FloorPlanPresetDef {
   name: string;
   description: string;
   source: string;
+  /** Optional multi-level catalog; omit → Main only. */
+  stories?: StoryDef[];
   rooms: FloorPlanPresetRoomDef[];
   connections: FloorPlanPresetConnectionDef[];
   exteriorDoors: FloorPlanPresetExteriorDoorDef[];
 }
 
 const H = 9;
-const VAULTED = archFt(10);
+/** Cathedral peak for living/dining (walls stay at H). */
+const VAULTED_PEAK = archFt(12);
 const HALL_W = archFt(0, 42); // 42"
 const WEST_W = 9;
 const HALL_X = WEST_W;
@@ -85,11 +94,21 @@ const GARAGE_X = 30;
  */
 export const KRAENZLEIN_7629_PRESET: FloorPlanPresetDef = {
   id: 'kraenzlein-7629',
-  version: 4,
+  version: 6,
   name: '7629 Kraenzlein Rd',
   description:
-    'BZAK 30\' wide new build — living/dining/kitchen, 3 beds, 2.5 baths, office, utility, 2-car garage.',
+    'BZAK 30\' wide new build — living/dining/kitchen, 3 beds, 2.5 baths, office, utility, 2-car garage, plus a partial loft over the garage.',
   source: '7629 Kraenzlein Rd-new build_D_30 Ft Wide Floor Plan_01-23-26',
+  stories: [
+    { storyIndex: 0, label: 'Main', kind: 'main', defaultHeightFt: H },
+    {
+      storyIndex: 1,
+      label: 'Loft',
+      kind: 'loft',
+      defaultHeightFt: 8,
+      partialFootprint: true,
+    },
+  ],
   rooms: [
     {
       key: 'porch',
@@ -149,7 +168,10 @@ export const KRAENZLEIN_7629_PRESET: FloorPlanPresetDef = {
       layoutZ: PORCH_D,
       widthFt: LIVING_W,
       depthFt: PUBLIC_ROW_D,
-      heightFt: VAULTED,
+      heightFt: H,
+      ceilingType: 'cathedral',
+      peakHeightFt: VAULTED_PEAK,
+      ridgeAxis: 'width',
     },
     {
       key: 'dining',
@@ -159,7 +181,10 @@ export const KRAENZLEIN_7629_PRESET: FloorPlanPresetDef = {
       layoutZ: PORCH_D,
       widthFt: DINING_W,
       depthFt: PUBLIC_ROW_D,
-      heightFt: VAULTED,
+      heightFt: H,
+      ceilingType: 'cathedral',
+      peakHeightFt: VAULTED_PEAK,
+      ridgeAxis: 'width',
     },
     {
       key: 'kitchen',
@@ -260,6 +285,17 @@ export const KRAENZLEIN_7629_PRESET: FloorPlanPresetDef = {
       widthFt: 40,
       depthFt: 30,
       heightFt: H,
+    },
+    {
+      key: 'garage-loft',
+      name: 'Garage loft',
+      type: 'other',
+      layoutX: GARAGE_X + 4,
+      layoutZ: GARAGE_Z + 4,
+      widthFt: 20,
+      depthFt: 16,
+      heightFt: 8,
+      storyIndex: 1,
     },
   ],
   connections: [

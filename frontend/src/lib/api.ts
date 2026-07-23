@@ -10,6 +10,7 @@ import type {
   SiteSettings,
   SiteStructure,
   SiteStructureKind,
+  StylePackId,
 } from '@/types';
 import type { CatalogSectionId } from '@/config/catalogCategories';
 
@@ -59,6 +60,20 @@ export async function fetchProject(projectId: string): Promise<Project> {
   return data.project;
 }
 
+export async function updateProject(
+  projectId: string,
+  patch: Partial<Pick<Project, 'name' | 'stories'>>,
+): Promise<Project> {
+  const res = await fetch(`/api/projects/${projectId}`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  const data = await parseJson<{ project: Project }>(res);
+  return data.project;
+}
+
 export async function createProject(
   name: string,
   opts?: { presetId?: string },
@@ -78,6 +93,19 @@ export async function createProjectFromPreset(
   name?: string,
 ): Promise<Project> {
   return createProject(name ?? 'My Home', { presetId });
+}
+
+export async function applyStylePack(
+  projectId: string,
+  stylePackId: StylePackId,
+): Promise<{ project: Project; rooms: Room[] }> {
+  const res = await fetch(`/api/projects/${projectId}/style-pack`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stylePackId }),
+  });
+  return parseJson<{ project: Project; rooms: Room[] }>(res);
 }
 
 export async function fetchProjectRooms(projectId: string): Promise<Room[]> {
@@ -113,7 +141,23 @@ export interface UpdateRoomResult {
 
 export async function updateRoom(
   roomId: string,
-  patch: Partial<Pick<Room, 'name' | 'type' | 'widthFt' | 'depthFt' | 'heightFt' | 'layoutX' | 'layoutZ'>>,
+  patch: Partial<
+    Pick<
+      Room,
+      | 'name'
+      | 'type'
+      | 'widthFt'
+      | 'depthFt'
+      | 'heightFt'
+      | 'ceilingType'
+      | 'peakHeightFt'
+      | 'ridgeAxis'
+      | 'floorFinishId'
+      | 'storyIndex'
+      | 'layoutX'
+      | 'layoutZ'
+    >
+  >,
 ): Promise<UpdateRoomResult> {
   const res = await fetch(`/api/rooms/${roomId}`, {
     method: 'PUT',
@@ -235,6 +279,7 @@ export async function createSiteStructure(
     heightFt?: number;
     rotationY?: number;
     material?: SiteStructure['material'];
+    fenceStyle?: SiteStructure['fenceStyle'];
     doorSide?: SiteStructure['doorSide'];
     snapToDoors?: boolean;
   },

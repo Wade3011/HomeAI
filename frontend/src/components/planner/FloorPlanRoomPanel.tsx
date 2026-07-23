@@ -3,8 +3,13 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { ROOM_TYPES, ROOM_TYPE_PRESETS, normalizeRoomType } from '@/config/roomTypes';
+import {
+  CeilingSettingsFields,
+  type CeilingSettingsPatch,
+} from '@/components/planner/CeilingSettingsFields';
+import { FloorFinishPicker } from '@/components/planner/FloorFinishPicker';
 import { RoomSettingsPanel } from '@/components/planner/RoomSettingsPanel';
-import type { Room, RoomType } from '@/types';
+import type { FloorFinishId, Room, RoomType } from '@/types';
 
 export function FloorPlanRoomPanel({
   room,
@@ -12,9 +17,13 @@ export function FloorPlanRoomPanel({
   onClose,
   onSaveDetails,
   onApplyDimensions,
+  onSaveCeiling,
+  onSaveFloorFinish,
   onDelete,
   isSavingDetails,
   isSavingDimensions,
+  isSavingCeiling,
+  isSavingFloor,
   isDeleting,
 }: {
   room: Room;
@@ -22,9 +31,13 @@ export function FloorPlanRoomPanel({
   onClose: () => void;
   onSaveDetails: (patch: { name: string; type: RoomType }) => void;
   onApplyDimensions: (dims: { widthFt: number; depthFt: number; heightFt: number }) => void;
+  onSaveCeiling: (patch: CeilingSettingsPatch) => void;
+  onSaveFloorFinish: (floorFinishId: FloorFinishId) => void;
   onDelete: () => void;
   isSavingDetails?: boolean;
   isSavingDimensions?: boolean;
+  isSavingCeiling?: boolean;
+  isSavingFloor?: boolean;
   isDeleting?: boolean;
 }) {
   const roomType = normalizeRoomType(room.type);
@@ -106,7 +119,28 @@ export function FloorPlanRoomPanel({
         roomName={room.name}
         onDelete={onDelete}
         isDeleting={isDeleting}
+        heightHint={
+          (room.ceilingType ?? 'flat') === 'cathedral'
+            ? 'Wall / eave height (cathedral peak is set below)'
+            : undefined
+        }
       />
+
+      <div className="border-t border-stone-100 p-4">
+        <FloorFinishPicker
+          room={room}
+          disabled={isSavingFloor}
+          onChange={onSaveFloorFinish}
+        />
+      </div>
+
+      <div className="border-t border-stone-100 p-4">
+        <CeilingSettingsFields
+          room={room}
+          disabled={isSavingCeiling}
+          onApply={onSaveCeiling}
+        />
+      </div>
 
       <div className="border-t border-stone-100 p-4">
         <Link

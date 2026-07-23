@@ -21,11 +21,14 @@ import {
   setSiteSettings,
   getSiteStructures,
   setSiteStructures,
+  applyStylePackToProject,
   createSiteStructure,
   deleteSiteStructure,
   linkSiteStructurePlannerRoom,
+  updateProject,
   updateRoom as updateRoomInStore,
 } from '@/lib/mockStore';
+import type { StoryDef, StylePackId } from '@/types';
 import {
   getCatalogItemsByIds,
   getCatalogItemsForSections,
@@ -107,6 +110,26 @@ export async function handleMockApi(
 
         if (method === 'GET' && parts.length === 2) {
           return json(200, { project });
+        }
+
+        if (method === 'PUT' && parts.length === 2) {
+          const updated = updateProject(projectId, {
+            name: body.name != null ? String(body.name) : undefined,
+            stories: Array.isArray(body.stories)
+              ? (body.stories as StoryDef[])
+              : undefined,
+          });
+          if (!updated) return json(404, { error: 'not_found', message: 'Project not found' });
+          return json(200, { project: updated });
+        }
+
+        if (parts[2] === 'style-pack' && method === 'POST') {
+          const stylePackId = String(body.stylePackId ?? '') as StylePackId;
+          const result = applyStylePackToProject(projectId, stylePackId);
+          if (!result) {
+            return json(400, { error: 'bad_request', message: 'Unknown style pack' });
+          }
+          return json(200, result);
         }
 
         if (parts[2] === 'rooms') {
@@ -214,13 +237,26 @@ export async function handleMockApi(
       }
       if (method === 'PUT') {
         const updated = updateRoomInStore(roomId, {
-          name: body.name != null ? String(body.name) : room.name,
-          type: body.type != null ? String(body.type) : room.type,
-          widthFt: body.widthFt != null ? Number(body.widthFt) : room.widthFt,
-          depthFt: body.depthFt != null ? Number(body.depthFt) : room.depthFt,
-          heightFt: body.heightFt != null ? Number(body.heightFt) : room.heightFt,
-          layoutX: body.layoutX != null ? Number(body.layoutX) : room.layoutX,
-          layoutZ: body.layoutZ != null ? Number(body.layoutZ) : room.layoutZ,
+          ...(body.name != null ? { name: String(body.name) } : {}),
+          ...(body.type != null ? { type: String(body.type) } : {}),
+          ...(body.widthFt != null ? { widthFt: Number(body.widthFt) } : {}),
+          ...(body.depthFt != null ? { depthFt: Number(body.depthFt) } : {}),
+          ...(body.heightFt != null ? { heightFt: Number(body.heightFt) } : {}),
+          ...(body.ceilingType != null
+            ? { ceilingType: body.ceilingType as 'flat' | 'cathedral' }
+            : {}),
+          ...(body.peakHeightFt != null
+            ? { peakHeightFt: Number(body.peakHeightFt) }
+            : {}),
+          ...(body.ridgeAxis != null
+            ? { ridgeAxis: body.ridgeAxis as 'width' | 'depth' }
+            : {}),
+          ...(body.floorFinishId != null
+            ? { floorFinishId: body.floorFinishId }
+            : {}),
+          ...(body.storyIndex != null ? { storyIndex: Number(body.storyIndex) } : {}),
+          ...(body.layoutX != null ? { layoutX: Number(body.layoutX) } : {}),
+          ...(body.layoutZ != null ? { layoutZ: Number(body.layoutZ) } : {}),
         });
         if (!updated) return json(404, { error: 'not_found', message: 'Room not found' });
         return json(200, {

@@ -32,7 +32,12 @@ import {
   RoomFloorDimensions,
   SelectedPlacementDimensions,
 } from '@/components/planner/SceneDimensions';
+import { CeilingToggleButton } from '@/components/planner/CeilingToggleButton';
+import { GridToggleButton } from '@/components/planner/GridToggleButton';
+import { RoomCeiling } from '@/components/planner/RoomCeiling';
+import { RoomFloor } from '@/components/planner/RoomFloor';
 import { WallToggleButton } from '@/components/planner/WallToggleButton';
+import { ceilingHeightAt } from '@/lib/ceilingGeometry';
 import { preloadCatalogModels } from '@/lib/planner/catalogMeshModels';
 
 const INCHES_PER_FOOT = 12;
@@ -78,6 +83,8 @@ export function PlannerScene({
 }) {
   const [isDragging, setIsDragging] = useState(false);
   const [showWalls, setShowWalls] = useState(true);
+  const [showGrid, setShowGrid] = useState(true);
+  const [showCeilings, setShowCeilings] = useState(true);
   const isDraggingRef = useRef(false);
   const setDragging = (value: boolean) => {
     isDraggingRef.current = value;
@@ -257,11 +264,20 @@ export function PlannerScene({
         }
       }}
     >
-      <WallToggleButton
-        showWalls={showWalls}
-        onToggle={() => setShowWalls((v) => !v)}
-        className="absolute right-3 top-3 z-10"
-      />
+      <div className="absolute right-3 top-3 z-10 flex flex-col items-end gap-2">
+        <WallToggleButton
+          showWalls={showWalls}
+          onToggle={() => setShowWalls((v) => !v)}
+        />
+        <CeilingToggleButton
+          showCeilings={showCeilings}
+          onToggle={() => setShowCeilings((v) => !v)}
+        />
+        <GridToggleButton
+          showGrid={showGrid}
+          onToggle={() => setShowGrid((v) => !v)}
+        />
+      </div>
       <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-xl border border-white/50 bg-slate-900/75 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-sm">
         <p>
           <strong>Drag</strong> rotate · <strong>Shift+drag</strong> pan · <strong>Right/middle-drag</strong> pan ·{' '}
@@ -278,15 +294,18 @@ export function PlannerScene({
           onSelectPlacement(null);
         }}
       >
-        <color attach="background" args={['#ebe8e3']} />
-        <Environment preset="apartment" environmentIntensity={0.45} />
-        <ambientLight intensity={0.65} />
-        <directionalLight position={[8, 14, 6]} intensity={1.1} />
+        <color attach="background" args={['#e7e2da']} />
+        <Environment preset="apartment" environmentIntensity={0.62} />
+        <ambientLight intensity={0.82} />
+        <hemisphereLight args={['#f5f0e8', '#c4b8a8', 0.35]} />
+        <directionalLight position={[8, 14, 6]} intensity={0.95} color="#fff8f0" />
+        <directionalLight position={[-6, 10, -4]} intensity={0.28} color="#e8eef5" />
         <BaseCabinetHighlights
           placements={placements}
           catalogById={catalogById}
           active={placingCountertop}
         />
+        <RoomFloor room={room} y={0.008} />
         <RoomFloorDimensions room={room} />
         {selectedPlacement && selectedResolved && (
           <SelectedPlacementDimensions
@@ -296,22 +315,25 @@ export function PlannerScene({
             depthFt={selectedResolved.depthFt}
           />
         )}
-        <Grid
-          args={[size.w, size.d]}
-          cellSize={1}
-          sectionSize={1}
-          cellColor="#d6d3d1"
-          sectionColor="#a8a29e"
-          fadeDistance={50}
-          position={[size.w / 2, 0.02, size.d / 2]}
-          raycast={() => null}
-        />
+        {showGrid ? (
+          <Grid
+            args={[size.w, size.d]}
+            cellSize={1}
+            sectionSize={1}
+            cellColor="#d6d3d1"
+            sectionColor="#a8a29e"
+            fadeDistance={50}
+            position={[size.w / 2, 0.025, size.d / 2]}
+            raycast={() => null}
+          />
+        ) : null}
         <RoomConnectionWalls
           room={room}
           wallPlans={wallPlans}
           showWalls={showWalls}
           showConnectionMarkers={hasConnections}
         />
+        {showCeilings ? <RoomCeiling room={room} opacity={0.92} /> : null}
         <WallPlacementSurfaces
           roomWidth={size.w}
           roomDepth={size.d}
@@ -333,7 +355,18 @@ export function PlannerScene({
               resolved={resolved}
               roomWidth={size.w}
               roomDepth={size.d}
-              roomHeight={size.h}
+              roomHeight={(() => {
+                const o = orientedDimensions(
+                  resolved.widthFt,
+                  resolved.depthFt,
+                  p.rotationY,
+                );
+                return ceilingHeightAt(
+                  room,
+                  p.positionX + o.widthFt / 2,
+                  p.positionZ + o.depthFt / 2,
+                );
+              })()}
               footprints={footprints}
               catalogById={catalogById}
               placements={placements}

@@ -39,6 +39,10 @@ import {
   snapToGrid,
 } from '@/components/planner/plannerUtils';
 import {
+  CeilingSettingsFields,
+} from '@/components/planner/CeilingSettingsFields';
+import { FloorFinishPicker } from '@/components/planner/FloorFinishPicker';
+import {
   canPlaceItemAt,
   isCountertopItem,
   placementFailureReason,
@@ -175,8 +179,20 @@ function PlannerInner({
   });
 
   const roomMutation = useMutation({
-    mutationFn: (dims: { widthFt: number; depthFt: number; heightFt: number }) =>
-      updateRoom(room.roomId, dims),
+    mutationFn: (
+      patch: Partial<
+        Pick<
+          Room,
+          | 'widthFt'
+          | 'depthFt'
+          | 'heightFt'
+          | 'ceilingType'
+          | 'peakHeightFt'
+          | 'ridgeAxis'
+          | 'floorFinishId'
+        >
+      >,
+    ) => updateRoom(room.roomId, patch),
     onSuccess: ({ room: updated, adjustedRooms }) => {
       setRoom(updated);
       queryClient.setQueryData(['room', room.roomId], updated);
@@ -476,7 +492,26 @@ function PlannerInner({
             roomName={room.name}
             onDelete={confirmDeleteRoom}
             isDeleting={deleteRoomMutation.isPending}
+            heightHint={
+              (room.ceilingType ?? 'flat') === 'cathedral'
+                ? 'Wall / eave height (set peak under Ceiling)'
+                : undefined
+            }
           />
+          <div className="border-t border-stone-100 p-4">
+            <FloorFinishPicker
+              room={room}
+              disabled={roomMutation.isPending}
+              onChange={(floorFinishId) => roomMutation.mutate({ floorFinishId })}
+            />
+          </div>
+          <div className="border-t border-stone-100 p-4">
+            <CeilingSettingsFields
+              room={room}
+              disabled={roomMutation.isPending}
+              onApply={(patch) => roomMutation.mutate(patch)}
+            />
+          </div>
         </CollapsiblePanel>
         {roomPreset.catalogSections.length > 0 && (
           <CollapsiblePanel

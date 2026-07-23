@@ -16,12 +16,15 @@ import {
 import { roomPlanFill } from '@/config/roomTypes';
 import {
   BUILDING_SIZE_OPTIONS,
+  canRotateStructure,
   isBuildingKind,
   SITE_STRUCTURE_PRESETS,
   type SiteStructurePreset,
 } from '@/config/siteStructurePresets';
 import {
+  computeBreezewayToOutbuilding,
   computeSiteBounds,
+  fenceFromLine,
   moveStructure,
   setStructureRotation,
   snapSiteFt,
@@ -35,7 +38,16 @@ import {
   trySnapDrivewayNearDoors,
   updateStructureRect,
 } from '@/lib/siteLayout';
-import type { Room, RoomWallSide, SiteCorner, SiteRoadSide, SiteSettings, SiteStructure, SiteStructureKind } from '@/types';
+import type {
+  Room,
+  RoomWallSide,
+  SiteCorner,
+  SiteFenceStyle,
+  SiteRoadSide,
+  SiteSettings,
+  SiteStructure,
+  SiteStructureKind,
+} from '@/types';
 import { formatFeetInchesPair } from '@/lib/imperialDimensions';
 import {
   CORNER_ROAD_SIDES,
@@ -63,7 +75,9 @@ type SiteMode =
   | 'add-driveway'
   | 'add-detached-garage'
   | 'add-pole-barn'
-  | 'add-shed';
+  | 'add-shed'
+  | 'add-fence'
+  | 'add-breezeway';
 
 type DraftRect = { x1: number; z1: number; x2: number; z2: number };
 
@@ -144,6 +158,7 @@ export function SitePlanEditor({
     origPanY: number;
   } | null>(null);
   const [spacePressed, setSpacePressed] = useState(false);
+  const [showGrid, setShowGrid] = useState(true);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -181,7 +196,10 @@ export function SitePlanEditor({
   const structures = localStructures ?? committedStructures;
   const exteriorDoors = exteriorDoorsQuery.data ?? [];
   const houseRooms = useMemo(
-    () => rooms.filter((room) => !room.linkedSiteStructureId),
+    () =>
+      rooms.filter(
+        (room) => !room.linkedSiteStructureId && (room.storyIndex ?? 0) === 0,
+      ),
     [rooms],
   );
 
@@ -371,7 +389,7 @@ export function SitePlanEditor({
   const setSelectedStructureRotation = (degrees: number) => {
     if (!selectedId) return;
     const structure = structures.find((s) => s.structureId === selectedId);
-    if (!structure || !isBuildingKind(structure.kind)) return;
+    if (!structure || !canRotateStructure(structure.kind)) return;
     const normalized = ((Math.round(degrees) % 360) + 360) % 360;
     const rotationY = (normalized * Math.PI) / 180;
     const rotated = setStructureRotation(structure, rotationY);
@@ -402,6 +420,7 @@ export function SitePlanEditor({
       heightFt: structure.heightFt,
       rotationY: structure.rotationY,
       material: structure.material,
+      fenceStyle: structure.fenceStyle,
       doorSide: structure.doorSide,
       snapToDoors: false,
     });
@@ -425,6 +444,26 @@ export function SitePlanEditor({
       centerZ,
       widthFt,
       depthFt,
+      snapToDoors: false,
+    });
+  };
+
+  const breezewayTarget = useMemo(
+    () => computeBreezewayToOutbuilding(houseRooms, structures),
+    [houseRooms, structures],
+  );
+
+  const addBreezewayToGarage = () => {
+    if (!breezewayTarget) return;
+    createMutation.mutate({
+      kind: 'breezeway',
+      name: 'Breezeway',
+      centerX: breezewayTarget.centerX,
+      centerZ: breezewayTarget.centerZ,
+      widthFt: breezewayTarget.widthFt,
+      depthFt: breezewayTarget.depthFt,
+      rotationY: breezewayTarget.rotationY,
+      heightFt: SITE_STRUCTURE_PRESETS.breezeway.heightFt,
       snapToDoors: false,
     });
   };
@@ -501,6 +540,24 @@ export function SitePlanEditor({
   };
 
   const finishDraftRect = (rect: DraftRect) => {
+    if (mode === 'add-fence') {
+      const fence = fenceFromLine(rect.x1, rect.z1, rect.x2, rect.z2);
+      if (!fence) return;
+      createMutation.mutate({
+        kind: 'fence',
+        centerX: fence.centerX,
+        centerZ: fence.centerZ,
+        widthFt: fence.widthFt,
+        depthFt: fence.depthFt,
+        rotationY: fence.rotationY,
+        heightFt: SITE_STRUCTURE_PRESETS.fence.heightFt,
+        snapToDoors: false,
+      });
+      setDraftRect(null);
+      setMode('select');
+      return;
+    }
+
     const minX = Math.min(rect.x1, rect.x2);
     const maxX = Math.max(rect.x1, rect.x2);
     const minZ = Math.min(rect.z1, rect.z2);
@@ -510,11 +567,13 @@ export function SitePlanEditor({
     const kind: SiteStructureKind =
       mode === 'add-driveway'
         ? 'driveway'
-        : mode === 'add-detached-garage'
-          ? 'detached-garage'
-          : mode === 'add-pole-barn'
-            ? 'pole-barn'
-            : 'shed';
+        : mode === 'add-breezeway'
+          ? 'breezeway'
+          : mode === 'add-detached-garage'
+            ? 'detached-garage'
+            : mode === 'add-pole-barn'
+              ? 'pole-barn'
+              : 'shed';
 
     createMutation.mutate({
       kind,
@@ -522,6 +581,7 @@ export function SitePlanEditor({
       centerZ: (minZ + maxZ) / 2,
       widthFt: maxX - minX,
       depthFt: maxZ - minZ,
+      heightFt: kind === 'breezeway' ? SITE_STRUCTURE_PRESETS.breezeway.heightFt : undefined,
       snapToDoors: kind === 'driveway',
     });
     setDraftRect(null);
@@ -829,6 +889,34 @@ export function SitePlanEditor({
               description="Storage"
               color="#a8a29e"
             />
+            <AddFeatureButton
+              active={mode === 'add-fence'}
+              onClick={() => setMode('add-fence')}
+              label="Fence"
+              description="Drag a run"
+              color="#92400e"
+            />
+            <AddFeatureButton
+              active={mode === 'add-breezeway'}
+              onClick={() => setMode('add-breezeway')}
+              label="Breezeway"
+              description="Covered walk"
+              color="#d6d3d1"
+            />
+            <button
+              type="button"
+              onClick={addBreezewayToGarage}
+              disabled={!breezewayTarget || createMutation.isPending}
+              title={
+                breezewayTarget
+                  ? 'Place a covered breezeway from the house to the nearest garage or pole barn'
+                  : 'Place a detached garage or pole barn first'
+              }
+              className="rounded-xl border border-stone-300 bg-white px-3 py-2 text-left shadow-sm transition hover:border-stone-400 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span className="block text-sm font-semibold text-stone-800">Breezeway to garage</span>
+              <span className="block text-[11px] text-stone-500">One-click · house → outbuilding</span>
+            </button>
           </div>
           <p className="text-xs text-stone-500">
             {mode === 'pan' || spacePressed
@@ -837,7 +925,11 @@ export function SitePlanEditor({
                 ? 'Click a feature to select it and edit size below. Drag empty space to pan. Delete key removes the selected feature.'
                 : isBuildingAddMode(mode)
                   ? 'Set width, depth, and height below, then click on the lot to place the building.'
-                  : 'Click and drag on the lot to draw a driveway. Hold Space to pan.'}
+                  : mode === 'add-fence'
+                    ? 'Click and drag to draw a fence run. Hold Space to pan.'
+                    : mode === 'add-breezeway'
+                      ? 'Click and drag to draw a breezeway footprint, or use Breezeway to garage.'
+                      : 'Click and drag on the lot to draw a driveway. Hold Space to pan.'}
           </p>
         </div>
 
@@ -862,6 +954,14 @@ export function SitePlanEditor({
               </button>
             </>
           )}
+          <button
+            type="button"
+            onClick={() => setShowGrid((v) => !v)}
+            aria-pressed={showGrid}
+            className="mr-1 rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 hover:bg-stone-50"
+          >
+            {showGrid ? 'Hide grid' : 'Show grid'}
+          </button>
           <ViewControlButton onClick={() => setViewZoom((z) => clampZoom(z / 1.2))} title="Zoom out">
             −
           </ViewControlButton>
@@ -945,22 +1045,26 @@ export function SitePlanEditor({
                 onPointerDown={onCanvasPointerDown}
               />
 
-              <rect
-                x={-VIEWPORT_W}
-                y={-VIEWPORT_H}
-                width={VIEWPORT_W * 3}
-                height={VIEWPORT_H * 3}
-                fill="url(#siteGridMinor)"
-                pointerEvents="none"
-              />
-              <rect
-                x={-VIEWPORT_W}
-                y={-VIEWPORT_H}
-                width={VIEWPORT_W * 3}
-                height={VIEWPORT_H * 3}
-                fill="url(#siteGridMajor)"
-                pointerEvents="none"
-              />
+              {showGrid ? (
+                <>
+                  <rect
+                    x={-VIEWPORT_W}
+                    y={-VIEWPORT_H}
+                    width={VIEWPORT_W * 3}
+                    height={VIEWPORT_H * 3}
+                    fill="url(#siteGridMinor)"
+                    pointerEvents="none"
+                  />
+                  <rect
+                    x={-VIEWPORT_W}
+                    y={-VIEWPORT_H}
+                    width={VIEWPORT_W * 3}
+                    height={VIEWPORT_H * 3}
+                    fill="url(#siteGridMajor)"
+                    pointerEvents="none"
+                  />
+                </>
+              ) : null}
 
               <g ref={worldRef} transform={planTransform}>
                 {site &&
@@ -1089,29 +1193,39 @@ export function SitePlanEditor({
                   const preset = SITE_STRUCTURE_PRESETS[structure.kind];
                   const isSelected = selectedId === structure.structureId;
                   const isBuilding = isBuildingKind(structure.kind);
+                  const rotatable = canRotateStructure(structure.kind);
+                  const usePolygon = structure.kind !== 'driveway';
                   const overlapRooms = overlapByStructureId.get(structure.structureId);
                   const polygonPoints = structure.points
                     .map((p) => `${p.x * PLAN_SCALE},${p.z * PLAN_SCALE}`)
                     .join(' ');
                   const door = isBuilding ? structureDoorSegment(structure) : null;
                   const rotationHandle = (() => {
-                    if (!door || !isSelected) return null;
-                    const mx = (door.a.x + door.b.x) / 2;
-                    const mz = (door.a.z + door.b.z) / 2;
-                    const cx = b.centerX;
-                    const cz = b.centerZ;
-                    const dx = mx - cx;
-                    const dz = mz - cz;
-                    const len = Math.hypot(dx, dz) || 1;
+                    if (!isSelected || !rotatable) return null;
+                    if (door) {
+                      const mx = (door.a.x + door.b.x) / 2;
+                      const mz = (door.a.z + door.b.z) / 2;
+                      const cx = b.centerX;
+                      const cz = b.centerZ;
+                      const dx = mx - cx;
+                      const dz = mz - cz;
+                      const len = Math.hypot(dx, dz) || 1;
+                      return {
+                        x: mx + (dx / len) * 2.5,
+                        z: mz + (dz / len) * 2.5,
+                      };
+                    }
+                    const half = Math.max(b.widthFt, b.depthFt) / 2 + 2.5;
+                    const ry = structure.rotationY ?? 0;
                     return {
-                      x: mx + (dx / len) * 2.5,
-                      z: mz + (dz / len) * 2.5,
+                      x: b.centerX - Math.sin(ry) * half,
+                      z: b.centerZ + Math.cos(ry) * half,
                     };
                   })();
 
                   return (
                     <g key={structure.structureId}>
-                      {isBuilding ? (
+                      {usePolygon ? (
                         <polygon
                           points={polygonPoints}
                           fill={preset.planFill}
@@ -1155,14 +1269,14 @@ export function SitePlanEditor({
                         y={b.centerZ * PLAN_SCALE}
                         textAnchor="middle"
                         dominantBaseline="middle"
-                        fontSize={11}
-                        fill="#fafaf9"
+                        fontSize={structure.kind === 'fence' ? 9 : 11}
+                        fill={structure.kind === 'breezeway' ? '#44403c' : '#fafaf9'}
                         pointerEvents="none"
                         style={{ userSelect: 'none' }}
                       >
                         {structure.name}
                       </text>
-                      {isSelected && mode === 'select' && rotationHandle && isBuilding && (
+                      {isSelected && mode === 'select' && rotationHandle && rotatable && (
                         <g
                           transform={`translate(${rotationHandle.x * PLAN_SCALE}, ${rotationHandle.z * PLAN_SCALE})`}
                         >
@@ -1211,20 +1325,33 @@ export function SitePlanEditor({
                   );
                 })}
 
-                {draftRect && (
-                  <rect
-                    x={Math.min(draftRect.x1, draftRect.x2) * PLAN_SCALE}
-                    y={Math.min(draftRect.z1, draftRect.z2) * PLAN_SCALE}
-                    width={Math.abs(draftRect.x2 - draftRect.x1) * PLAN_SCALE}
-                    height={Math.abs(draftRect.z2 - draftRect.z1) * PLAN_SCALE}
-                    fill="#4b5563"
-                    fillOpacity={0.35}
-                    stroke="#374151"
-                    strokeWidth={1.2}
-                    strokeDasharray="6 4"
-                    pointerEvents="none"
-                  />
-                )}
+                {draftRect &&
+                  (mode === 'add-fence' ? (
+                    <line
+                      x1={draftRect.x1 * PLAN_SCALE}
+                      y1={draftRect.z1 * PLAN_SCALE}
+                      x2={draftRect.x2 * PLAN_SCALE}
+                      y2={draftRect.z2 * PLAN_SCALE}
+                      stroke="#92400e"
+                      strokeWidth={3}
+                      strokeDasharray="6 4"
+                      strokeLinecap="round"
+                      pointerEvents="none"
+                    />
+                  ) : (
+                    <rect
+                      x={Math.min(draftRect.x1, draftRect.x2) * PLAN_SCALE}
+                      y={Math.min(draftRect.z1, draftRect.z2) * PLAN_SCALE}
+                      width={Math.abs(draftRect.x2 - draftRect.x1) * PLAN_SCALE}
+                      height={Math.abs(draftRect.z2 - draftRect.z1) * PLAN_SCALE}
+                      fill={mode === 'add-breezeway' ? '#d6d3d1' : '#4b5563'}
+                      fillOpacity={0.35}
+                      stroke={mode === 'add-breezeway' ? '#a8a29e' : '#374151'}
+                      strokeWidth={1.2}
+                      strokeDasharray="6 4"
+                      pointerEvents="none"
+                    />
+                  ))}
               </g>
             </g>
 
@@ -1773,6 +1900,9 @@ function SiteStructurePanel({
   const depthFt = structure.depthFt ?? b?.depthFt ?? preset.depthFt;
   const heightFt = structure.heightFt ?? preset.heightFt ?? 10;
   const isBuilding = isBuildingKind(structure.kind);
+  const rotatable = canRotateStructure(structure.kind);
+  const isFence = structure.kind === 'fence';
+  const isBreezeway = structure.kind === 'breezeway';
   const rotationDeg = structureRotationDegrees(structure);
 
   return (
@@ -1797,25 +1927,27 @@ function SiteStructurePanel({
       </label>
 
       <div className="mt-3">
-        <p className="text-xs font-medium text-stone-600">Footprint size</p>
+        <p className="text-xs font-medium text-stone-600">
+          {isFence ? 'Fence length × thickness' : 'Footprint size'}
+        </p>
         <div className="mt-2">
           <BuildingSizeFields
             widthFt={widthFt}
             depthFt={depthFt}
             heightFt={heightFt}
             sizeOptions={isBuilding ? BUILDING_SIZE_OPTIONS[structure.kind] : undefined}
-            showHeight={isBuilding}
+            showHeight={isBuilding || isFence || isBreezeway}
             disabled={saving}
             onApply={(size) =>
               onChange(
-                isBuilding
+                isBuilding || isFence || isBreezeway
                   ? { widthFt: size.widthFt, depthFt: size.depthFt, heightFt: size.heightFt }
                   : { widthFt: size.widthFt, depthFt: size.depthFt },
               )
             }
           />
         </div>
-        {isBuilding && structureHasRotation(structure) && (
+        {rotatable && structureHasRotation(structure) && (
           <p className="mt-2 text-[11px] text-amber-700">
             Corner handles are disabled while rotated — use the size fields above, or set rotation to
             0° to resize on canvas.
@@ -1823,7 +1955,22 @@ function SiteStructurePanel({
         )}
       </div>
 
-      {isBuilding && (
+      {isFence && (
+        <label className="mt-3 block text-xs text-stone-600">
+          Fence style
+          <select
+            defaultValue={structure.fenceStyle ?? preset.fenceStyle ?? 'wood'}
+            onChange={(e) => onChange({ fenceStyle: e.target.value as SiteFenceStyle })}
+            className="mt-1 w-full rounded-lg border border-stone-300 px-2 py-1.5 text-sm"
+          >
+            <option value="wood">Wood</option>
+            <option value="vinyl">Vinyl</option>
+            <option value="chain-link">Chain-link</option>
+          </select>
+        </label>
+      )}
+
+      {rotatable && (
         <>
           <div className="mt-3">
             <p className="text-xs font-medium text-stone-600">Rotation</p>
@@ -1860,32 +2007,36 @@ function SiteStructurePanel({
             </p>
           </div>
 
-          <label className="mt-3 block text-xs text-stone-600">
-            Main door wall
-            <select
-              defaultValue={structure.doorSide ?? preset.doorSide ?? 'front'}
-              onChange={(e) => onChange({ doorSide: e.target.value as RoomWallSide })}
-              className="mt-1 w-full rounded-lg border border-stone-300 px-2 py-1.5 text-sm"
-            >
-              <option value="front">Front</option>
-              <option value="back">Back</option>
-              <option value="left">Left</option>
-              <option value="right">Right</option>
-            </select>
-          </label>
+          {isBuilding && (
+            <>
+              <label className="mt-3 block text-xs text-stone-600">
+                Main door wall
+                <select
+                  defaultValue={structure.doorSide ?? preset.doorSide ?? 'front'}
+                  onChange={(e) => onChange({ doorSide: e.target.value as RoomWallSide })}
+                  className="mt-1 w-full rounded-lg border border-stone-300 px-2 py-1.5 text-sm"
+                >
+                  <option value="front">Front</option>
+                  <option value="back">Back</option>
+                  <option value="left">Left</option>
+                  <option value="right">Right</option>
+                </select>
+              </label>
 
-          <button
-            type="button"
-            onClick={onOpenPlanner}
-            disabled={linking || saving}
-            className="mt-4 w-full rounded-lg bg-[var(--sage-700)] px-3 py-2 text-sm font-semibold text-white hover:bg-[var(--sage-800)] disabled:opacity-50"
-          >
-            {linking
-              ? 'Opening planner…'
-              : structure.linkedRoomId
-                ? 'Open in 3D planner'
-                : 'Create & open in 3D planner'}
-          </button>
+              <button
+                type="button"
+                onClick={onOpenPlanner}
+                disabled={linking || saving}
+                className="mt-4 w-full rounded-lg bg-[var(--sage-700)] px-3 py-2 text-sm font-semibold text-white hover:bg-[var(--sage-800)] disabled:opacity-50"
+              >
+                {linking
+                  ? 'Opening planner…'
+                  : structure.linkedRoomId
+                    ? 'Open in 3D planner'
+                    : 'Create & open in 3D planner'}
+              </button>
+            </>
+          )}
         </>
       )}
 

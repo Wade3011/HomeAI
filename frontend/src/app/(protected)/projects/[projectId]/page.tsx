@@ -1,12 +1,14 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import Link from 'next/link';
 import { use, useState } from 'react';
-import { fetchProject, fetchProjectRooms } from '@/lib/api';
+import { applyStylePack, fetchProject, fetchProjectRooms, updateProject } from '@/lib/api';
 import { FloorPlanEditor } from '@/components/planner/FloorPlanEditor';
 import { SitePlanEditor } from '@/components/planner/SitePlanEditor';
+import { StylePackPanel } from '@/components/planner/StylePackPanel';
+import type { StoryDef, StylePackId } from '@/types';
 
 type ProjectTab = 'floor' | 'site';
 
@@ -16,6 +18,7 @@ export default function ProjectDetailPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = use(params);
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<ProjectTab>('floor');
 
   const { data: project, isLoading: loadingProject } = useQuery({
@@ -26,6 +29,21 @@ export default function ProjectDetailPage({
   const { data: rooms = [], isLoading: loadingRooms } = useQuery({
     queryKey: ['rooms', projectId],
     queryFn: () => fetchProjectRooms(projectId),
+  });
+
+  const stylePackMutation = useMutation({
+    mutationFn: (stylePackId: StylePackId) => applyStylePack(projectId, stylePackId),
+    onSuccess: (result) => {
+      queryClient.setQueryData(['project', projectId], result.project);
+      queryClient.setQueryData(['rooms', projectId], result.rooms);
+    },
+  });
+
+  const storiesMutation = useMutation({
+    mutationFn: (stories: StoryDef[]) => updateProject(projectId, { stories }),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['project', projectId], updated);
+    },
   });
 
   if (loadingProject || loadingRooms) {
@@ -62,6 +80,14 @@ export default function ProjectDetailPage({
         </div>
       </div>
 
+      <div className="mb-6">
+        <StylePackPanel
+          activePackId={project?.stylePackId}
+          applying={stylePackMutation.isPending}
+          onApply={(id) => stylePackMutation.mutate(id)}
+        />
+      </div>
+
       <div className="mb-6 space-y-2">
         <div className="flex gap-1 rounded-full bg-stone-100 p-1 text-sm w-fit">
           <TabButton active={tab === 'floor'} onClick={() => setTab('floor')}>
@@ -79,7 +105,14 @@ export default function ProjectDetailPage({
       </div>
 
       {tab === 'floor' ? (
-        <FloorPlanEditor projectId={projectId} rooms={rooms} />
+        <FloorPlanEditor
+          projectId={projectId}
+          projectName={project?.name ?? 'Floor plan'}
+          stories={project?.stories}
+          rooms={rooms}
+          onStoriesChange={(stories) => storiesMutation.mutate(stories)}
+          storiesSaving={storiesMutation.isPending}
+        />
       ) : (
         <SitePlanEditor projectId={projectId} rooms={rooms} />
       )}

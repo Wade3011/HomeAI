@@ -37,14 +37,56 @@ export interface CustomItemSpec {
   sectionalArmDepthIn?: number;
 }
 
+export type FloorFinishId =
+  | 'hardwood-oak'
+  | 'hardwood-walnut'
+  | 'tile-ceramic'
+  | 'tile-marble'
+  | 'carpet'
+  | 'luxury-vinyl'
+  | 'concrete';
+
+export type StylePackId = 'modern' | 'farmhouse' | 'coastal' | 'industrial';
+
+/**
+ * Vertical level in the house.
+ * - basement: below grade (storyIndex < 0)
+ * - main: finish floor at Y=0 (storyIndex 0)
+ * - upper: full (or near-full) floor plate above main
+ * - loft / attic: often a *partial* footprint over part of the house
+ */
+export type StoryKind = 'basement' | 'main' | 'upper' | 'loft' | 'attic';
+
+export interface StoryDef {
+  storyIndex: number;
+  label: string;
+  kind: StoryKind;
+  /** Clear height used for stacking stories and default new-room height. */
+  defaultHeightFt: number;
+  /**
+   * When true, this level may not fill the main floor plate (loft/attic).
+   * Floor plan ghosts the main outline underneath for alignment.
+   */
+  partialFootprint?: boolean;
+}
+
 export interface Project {
   projectId: string;
   ownerUserId: string;
   name: string;
   unitSystem: UnitSystem;
+  /** Active style pack (materials defaults); optional. */
+  stylePackId?: StylePackId;
+  /** Vertical levels; omit → treated as Main only. */
+  stories?: StoryDef[];
   createdAt: string;
   updatedAt: string;
 }
+
+export type CeilingType = 'flat' | 'cathedral';
+
+/** Ridge line direction for cathedral ceilings. */
+export type RidgeAxis = 'width' | 'depth';
 
 export interface Room {
   roomId: string;
@@ -53,7 +95,24 @@ export interface Room {
   name: string;
   widthFt: number;
   depthFt: number;
+  /**
+   * Wall top height (feet). For flat ceilings this is also the ceiling.
+   * For cathedral ceilings this is the **eave** height.
+   */
   heightFt: number;
+  /** Default 'flat' when omitted. */
+  ceilingType?: CeilingType;
+  /** Cathedral ridge height — must be > heightFt. */
+  peakHeightFt?: number;
+  /** Cathedral ridge direction. Default 'width'. */
+  ridgeAxis?: RidgeAxis;
+  /** Floor finish for 2D/3D product feel. */
+  floorFinishId?: FloorFinishId;
+  /**
+   * Which story this room sits on. Default 0 (Main).
+   * Shared XZ origin across stories so lofts/upper floors align over rooms below.
+   */
+  storyIndex?: number;
   /** Position on project floor plan (feet from origin) */
   layoutX?: number;
   layoutZ?: number;
@@ -201,9 +260,13 @@ export type SiteStructureKind =
   | 'driveway'
   | 'detached-garage'
   | 'pole-barn'
-  | 'shed';
+  | 'shed'
+  | 'fence'
+  | 'breezeway';
 
 export type SitePavingMaterial = 'asphalt' | 'concrete' | 'gravel' | 'pavers';
+
+export type SiteFenceStyle = 'wood' | 'vinyl' | 'chain-link';
 
 /** Point on site plan in world feet (x, z). */
 export interface SitePoint {
@@ -228,6 +291,8 @@ export interface SiteStructure {
   heightFt?: number;
   /** Driveway paving material. */
   material?: SitePavingMaterial;
+  /** Fence style (fence only). */
+  fenceStyle?: SiteFenceStyle;
   /** Building main door wall side. */
   doorSide?: RoomWallSide;
   /** Room used for interior planner when opening a detached building. */

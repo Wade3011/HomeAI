@@ -11,6 +11,7 @@ Browser (frontend/)
     → API Gateway REST API
         → AWS Lambda
             → Amazon DynamoDB
+            → Amazon Bedrock (Home AI assistant — backend only)
             → External APIs (BuildCalculator, retailer APIs later)
     → Amazon S3 + CloudFront (3D assets, phase 5)
 ```
@@ -41,6 +42,17 @@ Amplify Gen 2 in `backend/` provisions and wires most AWS resources. Amplify Hos
 | **Lambda** | `BUILD_CALCULATOR_BASE_URL` env | External estimate API |
 | **DynamoDB** | `EstimateCache` with TTL | Cache pricing responses |
 
+### Phase 4 — Home AI assistant (backend)
+
+| AWS service | Resource | Notes |
+|-------------|----------|-------|
+| **Amazon Bedrock** | Foundation model(s) for Home AI assistant | Invoked **only from Lambda** — never from the browser. Powers design-coach / chat suggestions (see HOME_AI_TRACKER). |
+| **IAM** | `bedrock:InvokeModel` (and related) on Lambda role | Least-privilege; pin model IDs in env |
+| **API Gateway** | e.g. `POST /assistant/chat` (or similar) | Auth’d; request includes project context; response streams or JSON |
+| **CloudWatch Logs** | Assistant Lambda / route logs | Monitor usage + errors; watch Bedrock spend |
+
+Frontend UI for the assistant is **deferred** — provision and call Bedrock from the backend when ready; do not build the chat surface yet.
+
 ### Phase 5 — Later
 
 | AWS service | Resource | Notes |
@@ -65,6 +77,7 @@ AppSync, RDS, ElastiCache, ECS/EKS.
 | GET/PUT | `/rooms/{id}/placements` | `homeaiApi` |
 | GET | `/catalog`, `/catalog/{id}` | `homeaiApi` |
 | POST | `/pricing/estimate`, `/pricing/estimate-room` | `homeaiApi` |
+| POST | `/assistant/chat` (planned) | `homeaiApi` → Bedrock |
 
 ---
 
@@ -76,6 +89,8 @@ AppSync, RDS, ElastiCache, ECS/EKS.
 |----------|---------|
 | `TABLE_*` | DynamoDB table names |
 | `USER_POOL_ID` | Owner checks (optional) |
+| `BEDROCK_MODEL_ID` | Bedrock model ID for Home AI assistant |
+| `BEDROCK_REGION` | Region where Bedrock is enabled (if different from Lambda) |
 
 ### Frontend (`frontend/.env.local`)
 

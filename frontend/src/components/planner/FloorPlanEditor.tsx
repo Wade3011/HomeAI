@@ -13,16 +13,17 @@ import {
   saveExteriorDoors,
   updateRoom,
 } from '@/lib/api';
+import { getFloorFinish, resolveFloorFinishId } from '@/config/floorFinishes';
 import {
   ROOM_TYPE_PRESETS,
   ROOM_TYPES,
   normalizeRoomType,
-  roomPlanFill,
   roomTypePreset,
   type RoomTypePreset,
 } from '@/config/roomTypes';
 import {
   computeFloorPlanOverview,
+  computeProjectBounds,
   DOOR_WIDTH_FT,
   findConnection,
   oppositeWallSide,
@@ -42,13 +43,35 @@ import {
 } from '@/lib/floorPlanGroups';
 import type { ExteriorDoor, Room, RoomConnection, RoomType, RoomWallSide } from '@/types';
 import { formatFeetInches, formatFeetInchesPair, snapLayoutFt } from '@/lib/imperialDimensions';
+import { ExportFloorPlanButton } from '@/components/planner/ExportFloorPlanButton';
+import {
+  ImportFloorPlanPanel,
+  type ImportTool,
+} from '@/components/planner/ImportFloorPlanPanel';
 import { FloorPlanRoomPanel } from '@/components/planner/FloorPlanRoomPanel';
+import {
+  distanceFt,
+  rectToRoomLayout,
+  rescaleUnderlayByCalibration,
+  unionBoundsWithUnderlay,
+  type PlanPoint,
+  type PlanUnderlay,
+} from '@/lib/importFloorPlan';
 import {
   findFreeRoomSlot,
   roomToRect,
   snapAndResolveRoomPosition,
   type RoomRect,
 } from '@/lib/floorPlanSnap';
+import {
+  getStory,
+  MAIN_STORY_INDEX,
+  normalizeStories,
+  roomsOnStory,
+  shouldGhostMainFootprint,
+} from '@/lib/stories';
+import { StoryLevelBar } from '@/components/planner/StoryLevelBar';
+import type { StoryDef } from '@/types';
 
 const PLAN_SCALE = 8; // px per foot on floor plan canvas
 const PLAN_PAD_FT = 8;
@@ -69,21 +92,63 @@ type Mode = 'arrange' | 'connect' | 'exterior-doors';
 
 export function FloorPlanEditor({
   projectId,
+  projectName = 'Floor plan',
+  stories: storiesProp,
   rooms: allRooms,
+  onStoriesChange,
+  storiesSaving,
 }: {
   projectId: string;
+  projectName?: string;
+  stories?: StoryDef[];
   rooms: Room[];
+  onStoriesChange?: (stories: StoryDef[]) => void;
+  storiesSaving?: boolean;
 }) {
-  const rooms = useMemo(
+  const houseRooms = useMemo(
     () => allRooms.filter((room) => !room.linkedSiteStructureId),
     [allRooms],
   );
+  const stories = useMemo(() => normalizeStories(storiesProp), [storiesProp]);
+  const [activeStoryIndex, setActiveStoryIndex] = useState(MAIN_STORY_INDEX);
+  const activeStory = getStory(stories, activeStoryIndex) ?? stories[0];
+
+  useEffect(() => {
+    if (!stories.some((s) => s.storyIndex === activeStoryIndex)) {
+      setActiveStoryIndex(MAIN_STORY_INDEX);
+    }
+  }, [stories, activeStoryIndex]);
+
+  const rooms = useMemo(
+    () => roomsOnStory(houseRooms, activeStory.storyIndex),
+    [houseRooms, activeStory.storyIndex],
+  );
+  const ghostMainRooms = useMemo(() => {
+    if (!shouldGhostMainFootprint(activeStory)) return [];
+    return roomsOnStory(houseRooms, MAIN_STORY_INDEX);
+  }, [houseRooms, activeStory]);
+
   const queryClient = useQueryClient();
+  const svgRef = useRef<SVGSVGElement | null>(null);
   const [adding, setAdding] = useState(false);
   const [mode, setMode] = useState<Mode>('arrange');
   const [connectPick, setConnectPick] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+  const [showGrid, setShowGrid] = useState(true);
+  const [underlay, setUnderlay] = useState<PlanUnderlay | null>(null);
+  const [importTool, setImportTool] = useState<ImportTool>('off');
+  const [calibrateA, setCalibrateA] = useState<PlanPoint | null>(null);
+  const [calibrateB, setCalibrateB] = useState<PlanPoint | null>(null);
+  const [knownFeetInput, setKnownFeetInput] = useState('20');
+  const [traceRoomType, setTraceRoomType] = useState<RoomType>('living');
+  const [traceDraft, setTraceDraft] = useState<{
+    x1: number;
+    z1: number;
+    x2: number;
+    z2: number;
+  } | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   // Local layout overrides (room positions during drag). Committed to the
   // server only on pointerup so dragging stays smooth.
@@ -106,18 +171,40 @@ export function FloorPlanEditor({
     queryKey: ['connections', projectId],
     queryFn: () => fetchConnections(projectId),
   });
-  const connections = connectionsQuery.data ?? [];
+  const allConnections = connectionsQuery.data ?? [];
+  const storyRoomIds = useMemo(
+    () => new Set(rooms.map((r) => r.roomId)),
+    [rooms],
+  );
+  const connections = useMemo(
+    () =>
+      allConnections.filter(
+        (c) => storyRoomIds.has(c.roomAId) && storyRoomIds.has(c.roomBId),
+      ),
+    [allConnections, storyRoomIds],
+  );
 
   const exteriorDoorsQuery = useQuery({
     queryKey: ['exterior-doors', projectId],
     queryFn: () => fetchExteriorDoors(projectId),
   });
-  const exteriorDoors = exteriorDoorsQuery.data ?? [];
+  const allExteriorDoors = exteriorDoorsQuery.data ?? [];
+  const exteriorDoors = useMemo(
+    () => allExteriorDoors.filter((d) => storyRoomIds.has(d.roomId)),
+    [allExteriorDoors, storyRoomIds],
+  );
 
   const overview = useMemo(
     () => computeFloorPlanOverview(displayRooms),
     [displayRooms],
   );
+  const planBounds = useMemo(() => {
+    const forBounds =
+      ghostMainRooms.length > 0
+        ? [...displayRooms, ...ghostMainRooms]
+        : displayRooms;
+    return computeProjectBounds(forBounds);
+  }, [displayRooms, ghostMainRooms]);
 
   const roomGroups = useMemo(
     () => findConnectedRoomGroups(displayRooms, connections),
@@ -140,11 +227,41 @@ export function FloorPlanEditor({
     [roomGroups],
   );
 
-  const planOriginX = overview.bounds.minX - PLAN_PAD_FT;
-  const planOriginZ = overview.bounds.minZ - PLAN_PAD_FT;
-  const canvasW = (overview.bounds.widthFt + PLAN_PAD_FT * 2) * PLAN_SCALE;
-  const canvasH = (overview.bounds.depthFt + PLAN_PAD_FT * 2) * PLAN_SCALE;
+  const canvasBounds = useMemo(
+    () =>
+      unionBoundsWithUnderlay(
+        planBounds,
+        underlay,
+        displayRooms.length + ghostMainRooms.length,
+      ),
+    [planBounds, underlay, displayRooms.length, ghostMainRooms.length],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (underlay?.url.startsWith('blob:')) URL.revokeObjectURL(underlay.url);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- revoke only on unmount
+  }, []);
+
+  const planOriginX = canvasBounds.minX - PLAN_PAD_FT;
+  const planOriginZ = canvasBounds.minZ - PLAN_PAD_FT;
+  const canvasW = (canvasBounds.widthFt + PLAN_PAD_FT * 2) * PLAN_SCALE;
+  const canvasH = (canvasBounds.depthFt + PLAN_PAD_FT * 2) * PLAN_SCALE;
   const planTransform = `translate(${-planOriginX * PLAN_SCALE}, ${-planOriginZ * PLAN_SCALE})`;
+  const importCaptureActive = importTool === 'calibrate' || importTool === 'trace';
+
+  const clientToPlanFt = (clientX: number, clientY: number): PlanPoint => {
+    const svg = svgRef.current;
+    if (!svg) return { x: 0, z: 0 };
+    const rect = svg.getBoundingClientRect();
+    const xPx = clientX - rect.left;
+    const zPx = clientY - rect.top;
+    return {
+      x: xPx / PLAN_SCALE + planOriginX,
+      z: zPx / PLAN_SCALE + planOriginZ,
+    };
+  };
 
   const addMutation = useMutation({
     mutationFn: async (type: RoomType) => {
@@ -163,7 +280,8 @@ export function FloorPlanEditor({
         name: nextRoomName(type, rooms),
         widthFt: preset.widthFt,
         depthFt: preset.depthFt,
-        heightFt: preset.heightFt,
+        heightFt: activeStory.defaultHeightFt ?? preset.heightFt,
+        storyIndex: activeStory.storyIndex,
         layoutX,
         layoutZ,
       });
@@ -173,6 +291,58 @@ export function FloorPlanEditor({
       setAdding(false);
     },
   });
+
+  const traceRoomMutation = useMutation({
+    mutationFn: async (layout: {
+      layoutX: number;
+      layoutZ: number;
+      widthFt: number;
+      depthFt: number;
+    }) => {
+      const preset = ROOM_TYPE_PRESETS[traceRoomType];
+      return createRoom(projectId, {
+        type: traceRoomType,
+        name: nextRoomName(traceRoomType, rooms),
+        widthFt: layout.widthFt,
+        depthFt: layout.depthFt,
+        heightFt: activeStory.defaultHeightFt ?? preset.heightFt,
+        storyIndex: activeStory.storyIndex,
+        layoutX: layout.layoutX,
+        layoutZ: layout.layoutZ,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['rooms', projectId] });
+      setImportError(null);
+    },
+    onError: (err) => {
+      setImportError(err instanceof Error ? err.message : 'Could not create room');
+    },
+  });
+
+  const applyCalibration = () => {
+    if (!underlay || !calibrateA || !calibrateB) return;
+    setImportError(null);
+    try {
+      const next = rescaleUnderlayByCalibration(
+        underlay,
+        calibrateA,
+        calibrateB,
+        Number(knownFeetInput),
+      );
+      setUnderlay(next);
+      setCalibrateA(null);
+      setCalibrateB(null);
+      setImportTool('trace');
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : 'Calibration failed');
+    }
+  };
+
+  const clearCalibrationPicks = () => {
+    setCalibrateA(null);
+    setCalibrateB(null);
+  };
 
   const layoutMutation = useMutation({
     mutationFn: ({
@@ -296,6 +466,44 @@ export function FloorPlanEditor({
     },
   });
 
+  const roomCeilingMutation = useMutation({
+    mutationFn: ({
+      roomId,
+      patch,
+    }: {
+      roomId: string;
+      patch: {
+        ceilingType: Room['ceilingType'];
+        peakHeightFt?: number;
+        ridgeAxis?: Room['ridgeAxis'];
+      };
+    }) => updateRoom(roomId, patch),
+    onSuccess: ({ room, adjustedRooms }) => {
+      const touched = new Map<string, Room>([[room.roomId, room]]);
+      for (const adjusted of adjustedRooms) {
+        touched.set(adjusted.roomId, adjusted);
+      }
+      patchRoomsInCache(touched);
+    },
+  });
+
+  const roomFloorMutation = useMutation({
+    mutationFn: ({
+      roomId,
+      floorFinishId,
+    }: {
+      roomId: string;
+      floorFinishId: NonNullable<Room['floorFinishId']>;
+    }) => updateRoom(roomId, { floorFinishId }),
+    onSuccess: ({ room, adjustedRooms }) => {
+      const touched = new Map<string, Room>([[room.roomId, room]]);
+      for (const adjusted of adjustedRooms) {
+        touched.set(adjusted.roomId, adjusted);
+      }
+      patchRoomsInCache(touched);
+    },
+  });
+
   const selectedRoom = useMemo(
     () => rooms.find((r) => r.roomId === selectedRoomId) ?? null,
     [rooms, selectedRoomId],
@@ -317,6 +525,18 @@ export function FloorPlanEditor({
     if (mode !== 'arrange') setSelectedRoomId(null);
   }, [mode]);
 
+  const otherStoryConnections = useMemo(
+    () =>
+      allConnections.filter(
+        (c) => !storyRoomIds.has(c.roomAId) || !storyRoomIds.has(c.roomBId),
+      ),
+    [allConnections, storyRoomIds],
+  );
+  const otherStoryExteriorDoors = useMemo(
+    () => allExteriorDoors.filter((d) => !storyRoomIds.has(d.roomId)),
+    [allExteriorDoors, storyRoomIds],
+  );
+
   const toggleExteriorDoor = (room: Room, clickXFt: number, clickZFt: number) => {
     const hit = pickExteriorWallAtPoint(room, clickXFt, clickZFt, displayRooms);
     if (!hit) return;
@@ -328,13 +548,15 @@ export function FloorPlanEditor({
         Math.abs(d.offsetFt - hit.offsetFt) < 2.5,
     );
     if (existing) {
-      exteriorDoorsMutation.mutate(
-        exteriorDoors.filter((d) => d.doorId !== existing.doorId),
-      );
+      exteriorDoorsMutation.mutate([
+        ...otherStoryExteriorDoors,
+        ...exteriorDoors.filter((d) => d.doorId !== existing.doorId),
+      ]);
       return;
     }
 
     exteriorDoorsMutation.mutate([
+      ...otherStoryExteriorDoors,
       ...exteriorDoors,
       {
         doorId: `ext-${crypto.randomUUID()}`,
@@ -377,7 +599,7 @@ export function FloorPlanEditor({
         },
       ];
     }
-    connectionsMutation.mutate(next);
+    connectionsMutation.mutate([...otherStoryConnections, ...next]);
   };
 
   const onPickForConnect = (roomId: string) => {
@@ -402,9 +624,10 @@ export function FloorPlanEditor({
       if (nextKind) {
         toggleConnection(a, b, nextKind);
       } else {
-        connectionsMutation.mutate(
-          connections.filter((c) => c.connectionId !== existing!.connectionId),
-        );
+        connectionsMutation.mutate([
+          ...otherStoryConnections,
+          ...connections.filter((c) => c.connectionId !== existing!.connectionId),
+        ]);
       }
     }
     setConnectPick(null);
@@ -412,7 +635,22 @@ export function FloorPlanEditor({
 
   return (
     <div className="space-y-4">
-      <FloorPlanOverviewPanel overview={overview} />
+      {onStoriesChange && (
+        <StoryLevelBar
+          stories={stories}
+          rooms={houseRooms}
+          activeStoryIndex={activeStory.storyIndex}
+          busy={storiesSaving}
+          onSelectStory={setActiveStoryIndex}
+          onChangeStories={onStoriesChange}
+        />
+      )}
+
+      <FloorPlanOverviewPanel
+        overview={overview}
+        storyLabel={activeStory.label}
+        partialFootprint={Boolean(activeStory.partialFootprint)}
+      />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-1">
@@ -431,16 +669,66 @@ export function FloorPlanEditor({
             </ModeButton>
           </div>
           <p className="text-xs text-stone-500">
-            {mode === 'arrange'
-              ? 'Click a room to edit it, or drag to reposition. Rooms snap edge-to-edge and cannot overlap.'
-              : mode === 'connect'
-                ? connectPick
-                  ? 'Click an adjacent room to toggle: open → door → none.'
-                  : 'Click a room to start, then click another adjacent room to connect.'
-                : 'Click an exterior wall (not shared with another room) to add or remove a 3ft door.'}
+            {importTool === 'calibrate'
+              ? 'Import: click two points on a known wall length, then enter the real feet and Apply.'
+              : importTool === 'trace'
+                ? 'Import: drag rectangles on the underlay to create rooms. Set room type in Import plan.'
+                : mode === 'arrange'
+                  ? 'Click a room to edit it, or drag to reposition. Rooms snap edge-to-edge and cannot overlap.'
+                  : mode === 'connect'
+                    ? connectPick
+                      ? 'Click an adjacent room to toggle: open → door → none.'
+                      : 'Click a room to start, then click another adjacent room to connect.'
+                    : 'Click an exterior wall (not shared with another room) to add or remove a 3ft door.'}
           </p>
+          {importError && <p className="text-xs text-red-600">{importError}</p>}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowGrid((v) => !v)}
+            aria-pressed={showGrid}
+            className="rounded-full border border-stone-300 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 hover:border-[var(--sage-600)]"
+          >
+            {showGrid ? 'Hide grid' : 'Show grid'}
+          </button>
+          <ExportFloorPlanButton projectName={projectName} rooms={displayRooms} />
+          <ImportFloorPlanPanel
+            projectId={projectId}
+            underlay={underlay}
+            importTool={importTool}
+            calibratePickCount={(calibrateA ? 1 : 0) + (calibrateB ? 1 : 0)}
+            knownFeetInput={knownFeetInput}
+            traceRoomType={traceRoomType}
+            calibratedDistanceFt={
+              calibrateA && calibrateB ? distanceFt(calibrateA, calibrateB) : null
+            }
+            onUnderlayChange={(next) => {
+              if (underlay?.url.startsWith('blob:') && underlay.url !== next?.url) {
+                URL.revokeObjectURL(underlay.url);
+              }
+              setUnderlay(next);
+              clearCalibrationPicks();
+              setTraceDraft(null);
+              setImportError(null);
+            }}
+            onImportToolChange={(tool) => {
+              setImportTool(tool);
+              if (tool !== 'calibrate') clearCalibrationPicks();
+              if (tool !== 'trace') setTraceDraft(null);
+              if (tool !== 'off') setMode('arrange');
+            }}
+            onKnownFeetInputChange={setKnownFeetInput}
+            onTraceRoomTypeChange={setTraceRoomType}
+            onApplyCalibration={applyCalibration}
+            onClearCalibrationPicks={clearCalibrationPicks}
+            existingConnections={allConnections}
+            defaultStoryIndex={activeStory.storyIndex}
+            onLayoutImported={() => {
+              queryClient.invalidateQueries({ queryKey: ['rooms', projectId] });
+              queryClient.invalidateQueries({ queryKey: ['connections', projectId] });
+            }}
+          />
           <Link
             href={`/projects/${projectId}/3d`}
             className="rounded-full border border-stone-300 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 hover:border-[var(--sage-600)]"
@@ -479,6 +767,7 @@ export function FloorPlanEditor({
           }}
         >
           <svg
+            ref={svgRef}
             width={canvasW}
             height={canvasH}
             className="block"
@@ -500,10 +789,53 @@ export function FloorPlanEditor({
               />
             </pattern>
           </defs>
-          <rect width={canvasW} height={canvasH} fill="url(#planGrid)" />
+          {showGrid ? <rect width={canvasW} height={canvasH} fill="url(#planGrid)" /> : null}
 
           <g transform={planTransform}>
-            <FootprintDimensionBox bounds={overview.bounds} />
+            {underlay && (
+              <image
+                href={underlay.url}
+                x={underlay.originX * PLAN_SCALE}
+                y={underlay.originZ * PLAN_SCALE}
+                width={underlay.widthFt * PLAN_SCALE}
+                height={underlay.heightFt * PLAN_SCALE}
+                opacity={underlay.opacity}
+                preserveAspectRatio="none"
+                style={{ pointerEvents: 'none' }}
+              />
+            )}
+
+            {displayRooms.length > 0 && (
+              <FootprintDimensionBox bounds={overview.bounds} />
+            )}
+
+            {ghostMainRooms.length > 0 && (
+              <g className="pointer-events-none" opacity={0.45}>
+                {ghostMainRooms.map((room) => (
+                  <rect
+                    key={`ghost-${room.roomId}`}
+                    x={(room.layoutX ?? 0) * PLAN_SCALE}
+                    y={(room.layoutZ ?? 0) * PLAN_SCALE}
+                    width={room.widthFt * PLAN_SCALE}
+                    height={room.depthFt * PLAN_SCALE}
+                    fill="none"
+                    stroke="#a8a29e"
+                    strokeWidth={1.25}
+                    strokeDasharray="5 4"
+                    rx={2}
+                  />
+                ))}
+                <text
+                  x={planBounds.centerX * PLAN_SCALE}
+                  y={(planBounds.minZ - 1.25) * PLAN_SCALE}
+                  textAnchor="middle"
+                  fill="#78716c"
+                  style={{ fontSize: 10, fontWeight: 600 }}
+                >
+                  Main level (ghost)
+                </text>
+              </g>
+            )}
 
             {/* All wall strokes paint in one pass so touching rooms share a
                 single visible wall instead of stacking. Room floor fills are
@@ -534,65 +866,67 @@ export function FloorPlanEditor({
               />
             ))}
 
-            {displayRooms.map((room) => (
-              <RoomBlock
-                key={room.roomId}
-                room={room}
-                mode={mode}
-                inMergedGroup={mergedGroupByRoomId.has(room.roomId)}
-                isDragging={draggingId === room.roomId}
-                isSelected={selectedRoomId === room.roomId}
-                isConnectPick={connectPick === room.roomId}
-                projectId={projectId}
-                planOriginX={planOriginX}
-                planOriginZ={planOriginZ}
-                siblings={displayRooms
-                  .filter((r) => r.roomId !== room.roomId)
-                  .map((r) => roomToRect(r))}
-                onConnect={onPickForConnect}
-                onExteriorDoor={toggleExteriorDoor}
-                onFlip={() => flipMutation.mutate(room)}
-                flipPending={flipMutation.isPending}
-                onDragStart={() => setDraggingId(room.roomId)}
-                onDragMove={(layoutX, layoutZ) =>
-                  setLayoutOverrides((prev) => ({
-                    ...prev,
-                    [room.roomId]: { layoutX, layoutZ },
-                  }))
-                }
-                onDragEnd={(layoutX, layoutZ, moved) => {
-                  setDraggingId(null);
-                  if (!moved && mode === 'arrange') {
-                    setSelectedRoomId(room.roomId);
-                    setLayoutOverrides((prev) => {
-                      const next = { ...prev };
-                      delete next[room.roomId];
-                      return next;
-                    });
-                    return;
+            <g style={{ pointerEvents: importCaptureActive ? 'none' : undefined }}>
+              {displayRooms.map((room) => (
+                <RoomBlock
+                  key={room.roomId}
+                  room={room}
+                  mode={mode}
+                  inMergedGroup={mergedGroupByRoomId.has(room.roomId)}
+                  isDragging={draggingId === room.roomId}
+                  isSelected={selectedRoomId === room.roomId}
+                  isConnectPick={connectPick === room.roomId}
+                  projectId={projectId}
+                  planOriginX={planOriginX}
+                  planOriginZ={planOriginZ}
+                  siblings={displayRooms
+                    .filter((r) => r.roomId !== room.roomId)
+                    .map((r) => roomToRect(r))}
+                  onConnect={onPickForConnect}
+                  onExteriorDoor={toggleExteriorDoor}
+                  onFlip={() => flipMutation.mutate(room)}
+                  flipPending={flipMutation.isPending}
+                  onDragStart={() => setDraggingId(room.roomId)}
+                  onDragMove={(layoutX, layoutZ) =>
+                    setLayoutOverrides((prev) => ({
+                      ...prev,
+                      [room.roomId]: { layoutX, layoutZ },
+                    }))
                   }
-                  const committed = rooms.find((r) => r.roomId === room.roomId);
-                  const committedX = committed?.layoutX ?? 0;
-                  const committedZ = committed?.layoutZ ?? 0;
-                  if (
-                    Math.abs(committedX - layoutX) < 0.01 &&
-                    Math.abs(committedZ - layoutZ) < 0.01
-                  ) {
-                    setLayoutOverrides((prev) => {
-                      const next = { ...prev };
-                      delete next[room.roomId];
-                      return next;
+                  onDragEnd={(layoutX, layoutZ, moved) => {
+                    setDraggingId(null);
+                    if (!moved && mode === 'arrange') {
+                      setSelectedRoomId(room.roomId);
+                      setLayoutOverrides((prev) => {
+                        const next = { ...prev };
+                        delete next[room.roomId];
+                        return next;
+                      });
+                      return;
+                    }
+                    const committed = rooms.find((r) => r.roomId === room.roomId);
+                    const committedX = committed?.layoutX ?? 0;
+                    const committedZ = committed?.layoutZ ?? 0;
+                    if (
+                      Math.abs(committedX - layoutX) < 0.01 &&
+                      Math.abs(committedZ - layoutZ) < 0.01
+                    ) {
+                      setLayoutOverrides((prev) => {
+                        const next = { ...prev };
+                        delete next[room.roomId];
+                        return next;
+                      });
+                      return;
+                    }
+                    layoutMutation.mutate({
+                      roomId: room.roomId,
+                      layoutX,
+                      layoutZ,
                     });
-                    return;
-                  }
-                  layoutMutation.mutate({
-                    roomId: room.roomId,
-                    layoutX,
-                    layoutZ,
-                  });
-                }}
-              />
-            ))}
+                  }}
+                />
+              ))}
+            </g>
 
             {exteriorDoors.map((door) => {
               const room = displayRooms.find((r) => r.roomId === door.roomId);
@@ -652,11 +986,110 @@ export function FloorPlanEditor({
               ];
             });
           })}
+
+            {importCaptureActive && (
+              <rect
+                x={planOriginX * PLAN_SCALE}
+                y={planOriginZ * PLAN_SCALE}
+                width={(canvasBounds.widthFt + PLAN_PAD_FT * 2) * PLAN_SCALE}
+                height={(canvasBounds.depthFt + PLAN_PAD_FT * 2) * PLAN_SCALE}
+                fill="transparent"
+                style={{
+                  cursor: importTool === 'trace' ? 'crosshair' : 'cell',
+                  touchAction: 'none',
+                }}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  const pt = clientToPlanFt(e.clientX, e.clientY);
+                  if (importTool === 'calibrate') {
+                    if (!calibrateA) {
+                      setCalibrateA(pt);
+                      setCalibrateB(null);
+                    } else if (!calibrateB) {
+                      setCalibrateB(pt);
+                    } else {
+                      setCalibrateA(pt);
+                      setCalibrateB(null);
+                    }
+                    return;
+                  }
+                  (e.currentTarget as SVGRectElement).setPointerCapture?.(e.pointerId);
+                  setTraceDraft({ x1: pt.x, z1: pt.z, x2: pt.x, z2: pt.z });
+                }}
+                onPointerMove={(e) => {
+                  if (importTool !== 'trace' || !traceDraft) return;
+                  const pt = clientToPlanFt(e.clientX, e.clientY);
+                  setTraceDraft((prev) =>
+                    prev ? { ...prev, x2: pt.x, z2: pt.z } : prev,
+                  );
+                }}
+                onPointerUp={(e) => {
+                  if (importTool !== 'trace' || !traceDraft) return;
+                  const pt = clientToPlanFt(e.clientX, e.clientY);
+                  const draft = { ...traceDraft, x2: pt.x, z2: pt.z };
+                  setTraceDraft(null);
+                  const layout = rectToRoomLayout(
+                    draft.x1,
+                    draft.z1,
+                    draft.x2,
+                    draft.z2,
+                  );
+                  if (!layout) {
+                    setImportError('Room must be at least 3′ × 3′ — drag a larger rectangle.');
+                    return;
+                  }
+                  traceRoomMutation.mutate(layout);
+                }}
+              />
+            )}
+
+            {calibrateA && (
+              <circle
+                cx={calibrateA.x * PLAN_SCALE}
+                cy={calibrateA.z * PLAN_SCALE}
+                r={5}
+                fill="#b45309"
+                className="pointer-events-none"
+              />
+            )}
+            {calibrateB && (
+              <circle
+                cx={calibrateB.x * PLAN_SCALE}
+                cy={calibrateB.z * PLAN_SCALE}
+                r={5}
+                fill="#b45309"
+                className="pointer-events-none"
+              />
+            )}
+            {calibrateA && calibrateB && (
+              <line
+                x1={calibrateA.x * PLAN_SCALE}
+                y1={calibrateA.z * PLAN_SCALE}
+                x2={calibrateB.x * PLAN_SCALE}
+                y2={calibrateB.z * PLAN_SCALE}
+                stroke="#b45309"
+                strokeWidth={2}
+                strokeDasharray="4 3"
+                className="pointer-events-none"
+              />
+            )}
+            {traceDraft && (
+              <rect
+                x={Math.min(traceDraft.x1, traceDraft.x2) * PLAN_SCALE}
+                y={Math.min(traceDraft.z1, traceDraft.z2) * PLAN_SCALE}
+                width={Math.abs(traceDraft.x2 - traceDraft.x1) * PLAN_SCALE}
+                height={Math.abs(traceDraft.z2 - traceDraft.z1) * PLAN_SCALE}
+                fill="rgba(63, 91, 77, 0.2)"
+                stroke="#3f5b4d"
+                strokeWidth={2}
+                className="pointer-events-none"
+              />
+            )}
           </g>
         </svg>
         </div>
 
-        {mode === 'arrange' && selectedRoom && (
+        {mode === 'arrange' && !importCaptureActive && selectedRoom && (
           <FloorPlanRoomPanel
             room={selectedRoom}
             projectId={projectId}
@@ -667,9 +1100,17 @@ export function FloorPlanEditor({
             onApplyDimensions={(dims) =>
               roomDimensionsMutation.mutate({ roomId: selectedRoom.roomId, dims })
             }
+            onSaveCeiling={(patch) =>
+              roomCeilingMutation.mutate({ roomId: selectedRoom.roomId, patch })
+            }
+            onSaveFloorFinish={(floorFinishId) =>
+              roomFloorMutation.mutate({ roomId: selectedRoom.roomId, floorFinishId })
+            }
             onDelete={() => confirmDeleteRoom(selectedRoom)}
             isSavingDetails={roomDetailsMutation.isPending}
             isSavingDimensions={roomDimensionsMutation.isPending}
+            isSavingCeiling={roomCeilingMutation.isPending}
+            isSavingFloor={roomFloorMutation.isPending}
             isDeleting={deleteMutation.isPending}
           />
         )}
@@ -690,9 +1131,10 @@ export function FloorPlanEditor({
                   <button
                     type="button"
                     onClick={() =>
-                      exteriorDoorsMutation.mutate(
-                        exteriorDoors.filter((d) => d.doorId !== door.doorId),
-                      )
+                      exteriorDoorsMutation.mutate([
+                        ...otherStoryExteriorDoors,
+                        ...exteriorDoors.filter((d) => d.doorId !== door.doorId),
+                      ])
                     }
                     className="text-[11px] text-stone-500 hover:text-stone-800"
                   >
@@ -848,23 +1290,31 @@ function ModeButton({
 
 function FloorPlanOverviewPanel({
   overview,
+  storyLabel,
+  partialFootprint,
 }: {
   overview: ReturnType<typeof computeFloorPlanOverview>;
+  storyLabel?: string;
+  partialFootprint?: boolean;
 }) {
   const w = formatFeetInches(overview.footprintWidthFt);
   const d = formatFeetInches(overview.footprintDepthFt);
 
   return (
     <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
-      <h2 className="text-sm font-bold uppercase tracking-wide text-stone-500">Overview</h2>
+      <h2 className="text-sm font-bold uppercase tracking-wide text-stone-500">
+        Overview{storyLabel ? ` · ${storyLabel}` : ''}
+      </h2>
       <div className="mt-3 grid gap-3 sm:grid-cols-3">
-        <OverviewStat label="Total area" value={`${overview.totalSqFt.toLocaleString()} sq ft`} />
-        <OverviewStat label="Combined footprint" value={`${w} × ${d}`} />
+        <OverviewStat label="Level area" value={`${overview.totalSqFt.toLocaleString()} sq ft`} />
+        <OverviewStat label="Level footprint" value={`${w} × ${d}`} />
         <OverviewStat label="Rooms" value={String(overview.roomCount)} />
       </div>
       <p className="mt-2 text-xs text-stone-500">
-        Footprint is the bounding box of all rooms on the plan. Total area is the sum of each
-        room&apos;s width × depth.
+        Stats are for the active story only.
+        {partialFootprint
+          ? ' This level is marked partial (loft/attic) — dashed lines show the main floor below.'
+          : ' Footprint is the bounding box of rooms on this level.'}
       </p>
     </section>
   );
@@ -1208,7 +1658,7 @@ function RoomBlock({
   const y = lz * PLAN_SCALE;
   const w = room.widthFt * PLAN_SCALE;
   const h = room.depthFt * PLAN_SCALE;
-  const fill = roomPlanFill(room.type);
+  const fill = getFloorFinish(resolveFloorFinishId(room)).planTint;
 
   // Drag state lives in refs so pointermove handler stays stable & cheap.
   const dragRef = useRef<{

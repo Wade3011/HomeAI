@@ -1,4 +1,4 @@
-import type { RoomWallSide, SitePavingMaterial, SiteStructureKind } from '@/types';
+import type { RoomWallSide, SiteFenceStyle, SitePavingMaterial, SiteStructureKind } from '@/types';
 
 export interface SiteStructurePreset {
   kind: SiteStructureKind;
@@ -9,6 +9,7 @@ export interface SiteStructurePreset {
   depthFt: number;
   heightFt?: number;
   material?: SitePavingMaterial;
+  fenceStyle?: SiteFenceStyle;
   doorSide?: RoomWallSide;
   /** Floor plan fill color */
   planFill: string;
@@ -21,6 +22,8 @@ export const SITE_STRUCTURE_KINDS: SiteStructureKind[] = [
   'detached-garage',
   'pole-barn',
   'shed',
+  'fence',
+  'breezeway',
 ];
 
 export const SITE_STRUCTURE_PRESETS: Record<SiteStructureKind, SiteStructurePreset> = {
@@ -71,10 +74,52 @@ export const SITE_STRUCTURE_PRESETS: Record<SiteStructureKind, SiteStructurePres
     planFill: '#a8a29e',
     planStroke: '#78716c',
   },
+  fence: {
+    kind: 'fence',
+    label: 'Fence',
+    description: 'Yard fence run',
+    name: 'Fence',
+    widthFt: 40,
+    depthFt: 0.5,
+    heightFt: 6,
+    fenceStyle: 'wood',
+    planFill: '#92400e',
+    planStroke: '#78350f',
+  },
+  breezeway: {
+    kind: 'breezeway',
+    label: 'Breezeway',
+    description: 'Covered walk between house and outbuilding',
+    name: 'Breezeway',
+    widthFt: 8,
+    depthFt: 20,
+    heightFt: 9,
+    planFill: '#d6d3d1',
+    planStroke: '#a8a29e',
+  },
 };
 
+/** Detached outbuildings that open in the 3D room planner. */
 export function isBuildingKind(kind: SiteStructureKind): boolean {
-  return kind !== 'driveway';
+  return kind === 'detached-garage' || kind === 'pole-barn' || kind === 'shed';
+}
+
+export function isFenceKind(kind: SiteStructureKind): boolean {
+  return kind === 'fence';
+}
+
+export function isBreezewayKind(kind: SiteStructureKind): boolean {
+  return kind === 'breezeway';
+}
+
+/** Structures that keep height (buildings, fence, breezeway). */
+export function hasStructureHeight(kind: SiteStructureKind): boolean {
+  return isBuildingKind(kind) || kind === 'fence' || kind === 'breezeway';
+}
+
+/** Structures that support free rotation on the site plan. */
+export function canRotateStructure(kind: SiteStructureKind): boolean {
+  return isBuildingKind(kind) || kind === 'fence' || kind === 'breezeway';
 }
 
 export function getSiteStructurePreset(kind: SiteStructureKind): SiteStructurePreset {
@@ -106,3 +151,7 @@ export const BUILDING_SIZE_OPTIONS: Partial<Record<SiteStructureKind, BuildingSi
     { label: '12 × 16', widthFt: 12, depthFt: 16, heightFt: 10 },
   ],
 };
+
+export const FENCE_THICKNESS_FT = 0.5;
+export const FENCE_MIN_LENGTH_FT = 4;
+export const FENCE_POST_SPACING_FT = 8;

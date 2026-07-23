@@ -20,7 +20,7 @@ function roomIdForPreset(projectId: string, presetRoomKey: string): string {
  * `ROOM_GAP_FT` (= wall thickness) gap at every interior wall by shifting
  * rooms outward.
  */
-function expandWallGaps(
+function expandWallGapsForStory(
   defs: FloorPlanPresetDef['rooms'],
 ): FloorPlanPresetDef['rooms'] {
   const eps = 1e-6;
@@ -55,6 +55,20 @@ function expandWallGaps(
   });
 }
 
+/** Expand shared-wall gaps per story so lofts/attics don't shift with the main plate. */
+function expandWallGaps(
+  defs: FloorPlanPresetDef['rooms'],
+): FloorPlanPresetDef['rooms'] {
+  const byStory = new Map<number, FloorPlanPresetDef['rooms']>();
+  for (const def of defs) {
+    const story = def.storyIndex ?? 0;
+    const list = byStory.get(story) ?? [];
+    list.push(def);
+    byStory.set(story, list);
+  }
+  return Array.from(byStory.values()).flatMap((group) => expandWallGapsForStory(group));
+}
+
 export function buildRoomsFromPreset(projectId: string, preset: FloorPlanPresetDef): Room[] {
   const t = new Date().toISOString();
   const defs = expandWallGaps(preset.rooms);
@@ -66,6 +80,10 @@ export function buildRoomsFromPreset(projectId: string, preset: FloorPlanPresetD
     widthFt: def.widthFt,
     depthFt: def.depthFt,
     heightFt: def.heightFt ?? 9,
+    ceilingType: def.ceilingType,
+    peakHeightFt: def.peakHeightFt,
+    ridgeAxis: def.ridgeAxis,
+    storyIndex: def.storyIndex ?? 0,
     layoutX: def.layoutX,
     layoutZ: def.layoutZ,
     createdAt: t,

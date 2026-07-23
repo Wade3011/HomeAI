@@ -14,6 +14,7 @@ import {
   fetchSite,
 } from '@/lib/api';
 import { HomeScene } from '@/components/planner/HomeScene';
+import { normalizeStories, resolveRoomStoryIndex, roomsOnStory } from '@/lib/stories';
 import type { CatalogItem, Placement } from '@/types';
 
 export default function ProjectHomeViewPage({
@@ -23,6 +24,7 @@ export default function ProjectHomeViewPage({
 }) {
   const { projectId } = use(params);
   const [focusRoomId, setFocusRoomId] = useState<string | null>(null);
+  const [focusStoryIndex, setFocusStoryIndex] = useState<number | null>(null);
   const [showSite, setShowSite] = useState(false);
 
   const { data: project } = useQuery({
@@ -35,11 +37,20 @@ export default function ProjectHomeViewPage({
     queryFn: () => fetchProjectRooms(projectId),
   });
 
+  const stories = useMemo(() => normalizeStories(project?.stories), [project?.stories]);
   const houseRooms = useMemo(
     () => rooms.filter((room) => !room.linkedSiteStructureId),
     [rooms],
   );
-  const focusRooms = showSite ? houseRooms : rooms;
+  const storyScopedHouse = useMemo(() => {
+    if (focusStoryIndex == null) return houseRooms;
+    return roomsOnStory(houseRooms, focusStoryIndex);
+  }, [houseRooms, focusStoryIndex]);
+  const focusRooms = showSite
+    ? storyScopedHouse
+    : focusStoryIndex == null
+      ? rooms
+      : rooms.filter((r) => resolveRoomStoryIndex(r) === focusStoryIndex);
 
   const { data: connections = [] } = useQuery({
     queryKey: ['connections', projectId],
@@ -114,11 +125,39 @@ export default function ProjectHomeViewPage({
             {project?.name ?? 'Project'} · Whole-home view
           </h1>
           <p className="mt-1 text-sm text-stone-600">
-            See all your rooms together. Use Site + home to include the lot, driveway, and
-            outbuildings from your site plan.
+            Levels stack in 3D (basement below, loft/attic above). Use Site + home for the lot.
           </p>
         </div>
       </div>
+
+      {stories.length > 1 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl border border-stone-200 bg-white px-3 py-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+            Story:
+          </span>
+          <FocusChip
+            active={focusStoryIndex === null}
+            onClick={() => {
+              setFocusStoryIndex(null);
+              setFocusRoomId(null);
+            }}
+            label="All levels"
+          />
+          {stories.map((story) => (
+            <FocusChip
+              key={story.storyIndex}
+              active={focusStoryIndex === story.storyIndex}
+              onClick={() => {
+                setFocusStoryIndex(story.storyIndex);
+                setFocusRoomId(null);
+              }}
+              label={
+                story.partialFootprint ? `${story.label} (partial)` : story.label
+              }
+            />
+          ))}
+        </div>
+      )}
 
       <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl border border-stone-200 bg-white px-3 py-2">
         <span className="text-xs font-semibold uppercase tracking-wide text-stone-500">
@@ -161,6 +200,8 @@ export default function ProjectHomeViewPage({
           site={siteData?.site}
           structures={siteData?.structures ?? []}
           onToggleSite={setShowSite}
+          stories={stories}
+          focusStoryIndex={focusStoryIndex}
         />
       </div>
 

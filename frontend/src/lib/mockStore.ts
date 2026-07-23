@@ -17,10 +17,15 @@ import type {
   SiteSettings,
   SiteStructure,
   SiteStructureKind,
+  StoryDef,
+  StylePackId,
 } from '@/types';
-import { getSiteStructurePreset, isBuildingKind } from '@/config/siteStructurePresets';
+import { defaultFloorFinishId } from '@/config/floorFinishes';
+import { getSiteStructurePreset, hasStructureHeight, isBuildingKind } from '@/config/siteStructurePresets';
+import { floorFinishForStylePack, getStylePack } from '@/config/stylePacks';
 import { defaultSiteSettings, findNearestDrivewaySnapTarget, rectToPolygon, roomTypeForSiteStructure, snapDrivewayToExteriorDoor, structureBounds } from '@/lib/siteLayout';
 import { ROOM_TYPE_PRESETS, normalizeRoomType } from '@/config/roomTypes';
+import { DEFAULT_MAIN_STORY, getStory, normalizeStories } from '@/lib/stories';
 
 export const DEV_PROJECT_ID = 'dev-project-1';
 export const DEV_ROOM_ID = 'dev-room-kitchen';
@@ -36,6 +41,7 @@ let projects: Project[] = [
     ownerUserId: 'dev-user',
     name: 'Demo Home',
     unitSystem: 'imperial',
+    stories: [{ ...DEFAULT_MAIN_STORY }],
     createdAt: now,
     updatedAt: now,
   },
@@ -50,6 +56,7 @@ let rooms: Room[] = [
     widthFt: 14,
     depthFt: 12,
     heightFt: 9,
+    storyIndex: 0,
     layoutX: 0,
     layoutZ: 0,
     createdAt: now,
@@ -63,6 +70,7 @@ let rooms: Room[] = [
     widthFt: 8,
     depthFt: 8,
     heightFt: 9,
+    storyIndex: 0,
     layoutX: 16,
     layoutZ: 0,
     createdAt: now,
@@ -76,6 +84,7 @@ let rooms: Room[] = [
     widthFt: 16,
     depthFt: 14,
     heightFt: 9,
+    storyIndex: 0,
     layoutX: 0,
     layoutZ: 12,
     createdAt: now,
@@ -123,19 +132,27 @@ function buildPresetProject(
   presetId: string,
   projectId: string,
   projectName: string,
+  stylePackId: StylePackId = 'farmhouse',
 ): ProjectFromPresetResult | undefined {
   const preset = getFloorPlanPreset(presetId);
-  if (!preset) return undefined;
+  const pack = getStylePack(stylePackId);
+  if (!preset || !pack) return undefined;
   const t = new Date().toISOString();
   const project: Project = {
     projectId,
     ownerUserId: 'dev-user',
     name: projectName,
     unitSystem: 'imperial',
+    stylePackId,
+    stories: normalizeStories(preset.stories),
     createdAt: t,
     updatedAt: t,
   };
-  const presetRooms = buildRoomsFromPreset(projectId, preset);
+  const presetRooms = buildRoomsFromPreset(projectId, preset).map((room) => ({
+    ...room,
+    floorFinishId: floorFinishForStylePack(pack, room.type),
+    storyIndex: room.storyIndex ?? 0,
+  }));
   const roomsById = new Map(presetRooms.map((r) => [r.roomId, r]));
   const presetConnections = buildConnectionsFromPreset(projectId, preset).map((c) =>
     enrichConnectionSides(c, roomsById),
@@ -216,6 +233,7 @@ export function createProject(name: string): Project {
     ownerUserId: 'dev-user',
     name,
     unitSystem: 'imperial',
+    stories: [{ ...DEFAULT_MAIN_STORY }],
     createdAt: t,
     updatedAt: t,
   };
@@ -225,7 +243,63 @@ export function createProject(name: string): Project {
 }
 
 export function getProject(projectId: string): Project | undefined {
-  return projects.find((p) => p.projectId === projectId);
+  const project = projects.find((p) => p.projectId === projectId);
+  if (!project) return undefined;
+  if (project.stories?.length) return project;
+  const withStories: Project = {
+    ...project,
+    stories: [{ ...DEFAULT_MAIN_STORY }],
+  };
+  projects = projects.map((p) => (p.projectId === projectId ? withStories : p));
+  return withStories;
+}
+
+export function updateProject(
+  projectId: string,
+  patch: Partial<Pick<Project, 'name' | 'stories'>>,
+): Project | undefined {
+  const project = ensureProject(projectId) ?? getProject(projectId);
+  if (!project) return undefined;
+  const t = new Date().toISOString();
+  const updated: Project = {
+    ...project,
+    ...(patch.name !== undefined ? { name: patch.name } : {}),
+    ...(patch.stories !== undefined
+      ? { stories: normalizeStories(patch.stories as StoryDef[]) }
+      : {}),
+    updatedAt: t,
+  };
+  projects = projects.map((p) => (p.projectId === projectId ? updated : p));
+  return updated;
+}
+
+/** Apply a style pack’s flooring defaults to every room in the project. */
+export function applyStylePackToProject(
+  projectId: string,
+  stylePackId: StylePackId,
+): { project: Project; rooms: Room[] } | undefined {
+  const project = ensureProject(projectId) ?? getProject(projectId);
+  const pack = getStylePack(stylePackId);
+  if (!project || !pack) return undefined;
+
+  const t = new Date().toISOString();
+  const updatedProject: Project = {
+    ...project,
+    stylePackId,
+    updatedAt: t,
+  };
+  projects = projects.map((p) => (p.projectId === projectId ? updatedProject : p));
+
+  rooms = rooms.map((room) => {
+    if (room.projectId !== projectId) return room;
+    return {
+      ...room,
+      floorFinishId: floorFinishForStylePack(pack, room.type),
+      updatedAt: t,
+    };
+  });
+
+  return { project: updatedProject, rooms: getRoomsForProject(projectId) };
 }
 
 /**
@@ -235,7 +309,9 @@ export function getProject(projectId: string): Project | undefined {
  */
 export function ensureProject(projectId: string): Project | undefined {
   const existing = projects.find((p) => p.projectId === projectId);
-  if (existing) return existing;
+  if (existing) {
+    return getProject(projectId);
+  }
   if (!projectId.startsWith('proj-')) return undefined;
   const t = new Date().toISOString();
   const project: Project = {
@@ -243,6 +319,7 @@ export function ensureProject(projectId: string): Project | undefined {
     ownerUserId: 'dev-user',
     name: 'My Home',
     unitSystem: 'imperial',
+    stories: [{ ...DEFAULT_MAIN_STORY }],
     createdAt: t,
     updatedAt: t,
   };
@@ -259,6 +336,13 @@ export function createRoom(projectId: string, input: Partial<Room>): Room {
   const t = new Date().toISOString();
   const type = normalizeRoomType(input.type as string | undefined);
   const preset = ROOM_TYPE_PRESETS[type];
+  const project = getProject(projectId);
+  const pack = project?.stylePackId ? getStylePack(project.stylePackId) : null;
+  const floorFinishId =
+    input.floorFinishId ??
+    (pack ? floorFinishForStylePack(pack, type) : defaultFloorFinishId(type));
+  const storyIndex = input.storyIndex ?? 0;
+  const story = getStory(project?.stories, storyIndex);
   const room: Room = {
     roomId: `room-${crypto.randomUUID()}`,
     projectId,
@@ -266,7 +350,12 @@ export function createRoom(projectId: string, input: Partial<Room>): Room {
     name: input.name ?? preset.name,
     widthFt: input.widthFt ?? preset.widthFt,
     depthFt: input.depthFt ?? preset.depthFt,
-    heightFt: input.heightFt ?? preset.heightFt,
+    heightFt: input.heightFt ?? story?.defaultHeightFt ?? preset.heightFt,
+    ceilingType: input.ceilingType,
+    peakHeightFt: input.peakHeightFt,
+    ridgeAxis: input.ridgeAxis,
+    floorFinishId,
+    storyIndex,
     layoutX: input.layoutX ?? 0,
     layoutZ: input.layoutZ ?? 0,
     linkedSiteStructureId: input.linkedSiteStructureId,
@@ -284,7 +373,21 @@ export function getRoom(roomId: string): Room | undefined {
 export function updateRoom(
   roomId: string,
   patch: Partial<
-    Pick<Room, 'name' | 'type' | 'widthFt' | 'depthFt' | 'heightFt' | 'layoutX' | 'layoutZ'>
+    Pick<
+      Room,
+      | 'name'
+      | 'type'
+      | 'widthFt'
+      | 'depthFt'
+      | 'heightFt'
+      | 'ceilingType'
+      | 'peakHeightFt'
+      | 'ridgeAxis'
+      | 'floorFinishId'
+      | 'storyIndex'
+      | 'layoutX'
+      | 'layoutZ'
+    >
   >,
 ): UpdateRoomResult | undefined {
   const idx = rooms.findIndex((r) => r.roomId === roomId);
@@ -296,6 +399,11 @@ export function updateRoom(
     ...(patch.type !== undefined ? { type: normalizeRoomType(String(patch.type)) } : {}),
     updatedAt: new Date().toISOString(),
   };
+  // Flat ceilings clear cathedral-only fields (JSON omits `undefined` on the wire).
+  if (patch.ceilingType === 'flat') {
+    delete updated.peakHeightFt;
+    delete updated.ridgeAxis;
+  }
 
   const dimsChanged =
     (patch.widthFt !== undefined && patch.widthFt !== previous.widthFt) ||
@@ -517,6 +625,7 @@ export interface CreateSiteStructureInput {
   heightFt?: number;
   rotationY?: number;
   material?: SiteStructure['material'];
+  fenceStyle?: SiteStructure['fenceStyle'];
   doorSide?: SiteStructure['doorSide'];
   snapToDoors?: boolean;
 }
@@ -552,6 +661,8 @@ export function createSiteStructure(
   }
 
   const rotationY = input.rotationY ?? 0;
+  const keepRotation =
+    isBuildingKind(input.kind) || input.kind === 'fence' || input.kind === 'breezeway';
   const t = new Date().toISOString();
   const structure: SiteStructure = {
     structureId: `site-${crypto.randomUUID()}`,
@@ -563,9 +674,10 @@ export function createSiteStructure(
     centerZ,
     widthFt,
     depthFt,
-    rotationY: isBuildingKind(input.kind) ? rotationY : undefined,
-    heightFt: isBuildingKind(input.kind) ? heightFt : undefined,
+    rotationY: keepRotation ? rotationY : undefined,
+    heightFt: hasStructureHeight(input.kind) ? heightFt : undefined,
     material: input.kind === 'driveway' ? (input.material ?? preset.material) : undefined,
+    fenceStyle: input.kind === 'fence' ? (input.fenceStyle ?? preset.fenceStyle) : undefined,
     doorSide: isBuildingKind(input.kind) ? (input.doorSide ?? preset.doorSide) : undefined,
     createdAt: t,
     updatedAt: t,

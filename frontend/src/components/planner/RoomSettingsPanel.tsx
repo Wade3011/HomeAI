@@ -22,6 +22,7 @@ export function RoomSettingsPanel({
   onDelete,
   isDeleting,
   roomName,
+  heightHint,
 }: {
   widthFt: number;
   depthFt: number;
@@ -31,6 +32,8 @@ export function RoomSettingsPanel({
   onDelete?: () => void;
   isDeleting?: boolean;
   roomName?: string;
+  /** Optional note under Height (e.g. eave vs peak for cathedral). */
+  heightHint?: string;
 }) {
   const [width, setWidth] = useState(() => feetToFeetInches(widthFt));
   const [depth, setDepth] = useState(() => feetToFeetInches(depthFt));
@@ -102,6 +105,7 @@ export function RoomSettingsPanel({
           onFeetChange={(feet) => setHeight((prev) => ({ ...prev, feet }))}
           onInchesChange={(inches) => setHeight((prev) => ({ ...prev, inches }))}
         />
+        {heightHint ? <p className="text-[11px] text-stone-500">{heightHint}</p> : null}
       </div>
       {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
       <button

@@ -10,7 +10,12 @@ import type {
   SiteStructure,
   SiteStructureKind,
 } from '@/types';
-import { isBuildingKind } from '@/config/siteStructurePresets';
+import {
+  FENCE_MIN_LENGTH_FT,
+  FENCE_THICKNESS_FT,
+  SITE_STRUCTURE_PRESETS,
+  isBuildingKind,
+} from '@/config/siteStructurePresets';
 
 export const DEFAULT_LOT_WIDTH_FT = 120;
 export const DEFAULT_LOT_DEPTH_FT = 150;
@@ -640,4 +645,88 @@ export function structureOverlapsHouse(structure: SiteStructure, rooms: Room[]):
     }
   }
   return names;
+}
+
+/** Thin fence run from click-drag line (width = length, depth = thickness). */
+export function fenceFromLine(
+  x1: number,
+  z1: number,
+  x2: number,
+  z2: number,
+): {
+  centerX: number;
+  centerZ: number;
+  widthFt: number;
+  depthFt: number;
+  rotationY: number;
+} | null {
+  const dx = x2 - x1;
+  const dz = z2 - z1;
+  const length = Math.hypot(dx, dz);
+  if (length < FENCE_MIN_LENGTH_FT) return null;
+  return {
+    centerX: (x1 + x2) / 2,
+    centerZ: (z1 + z2) / 2,
+    widthFt: length,
+    depthFt: FENCE_THICKNESS_FT,
+    rotationY: Math.atan2(dz, dx),
+  };
+}
+
+/**
+ * Place a breezeway between the house footprint and the nearest detached garage / pole barn.
+ * Returns null if no outbuilding exists.
+ */
+export function computeBreezewayToOutbuilding(
+  rooms: Room[],
+  structures: SiteStructure[],
+  widthFt = SITE_STRUCTURE_PRESETS.breezeway.widthFt,
+): {
+  centerX: number;
+  centerZ: number;
+  widthFt: number;
+  depthFt: number;
+  rotationY: number;
+} | null {
+  const houseRooms = rooms.filter((r) => !r.linkedSiteStructureId);
+  if (houseRooms.length === 0) return null;
+  const house = computeProjectBounds(houseRooms);
+
+  let best: {
+    structure: SiteStructure;
+    dist: number;
+    from: SitePoint;
+    to: SitePoint;
+  } | null = null;
+
+  for (const structure of structures) {
+    if (structure.kind !== 'detached-garage' && structure.kind !== 'pole-barn') continue;
+    const b = structureBounds(structure);
+    if (!b) continue;
+    const to = { x: b.centerX, z: b.centerZ };
+    // Closest point on house AABB to outbuilding center
+    const from = {
+      x: Math.min(house.maxX, Math.max(house.minX, to.x)),
+      z: Math.min(house.maxZ, Math.max(house.minZ, to.z)),
+    };
+    const dist = Math.hypot(to.x - from.x, to.z - from.z);
+    if (dist < 4) continue;
+    if (!best || dist < best.dist) {
+      best = { structure, dist, from, to };
+    }
+  }
+  if (!best) return null;
+
+  const dx = best.to.x - best.from.x;
+  const dz = best.to.z - best.from.z;
+  const length = Math.hypot(dx, dz);
+  // Orient so depth runs along the connection (local +Z)
+  const rotationY = Math.atan2(dx, dz);
+  return {
+    centerX: (best.from.x + best.to.x) / 2,
+    centerZ: (best.from.z + best.to.z) / 2,
+    widthFt,
+    depthFt: length,
+    rotationY,
+  };
 }

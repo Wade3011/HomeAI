@@ -4,7 +4,16 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { Grid, OrbitControls, Environment } from '@react-three/drei';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
-import type { CatalogItem, ExteriorDoor, Placement, Room, RoomConnection, SiteSettings, SiteStructure } from '@/types';
+import type {
+  CatalogItem,
+  ExteriorDoor,
+  Placement,
+  Room,
+  RoomConnection,
+  SiteSettings,
+  SiteStructure,
+  StoryDef,
+} from '@/types';
 import { SiteSceneLayer } from '@/components/planner/SiteSceneLayer';
 import { computeSiteSceneBounds } from '@/lib/siteLayout';
 import { resolvePlacementItem } from '@/lib/placementItem';
@@ -12,7 +21,12 @@ import { resolvePlacementY } from '@/lib/placementHeight';
 import { CustomItemMesh } from '@/components/planner/CustomItemMesh';
 import { CatalogItemMesh } from '@/components/planner/CatalogItemMesh';
 import { meshColorForResolved } from '@/lib/planner/meshColors';
+import { CeilingToggleButton } from '@/components/planner/CeilingToggleButton';
+import { GridToggleButton } from '@/components/planner/GridToggleButton';
+import { RoomCeiling } from '@/components/planner/RoomCeiling';
+import { RoomFloor } from '@/components/planner/RoomFloor';
 import { WallToggleButton } from '@/components/planner/WallToggleButton';
+import { ceilingHeightAt } from '@/lib/ceilingGeometry';
 import { RoomConnectionWalls } from '@/components/planner/RoomConnectionWalls';
 import { orientedDimensions } from '@/components/planner/placementCollision';
 import {
@@ -21,6 +35,12 @@ import {
   type RoomWallPlan,
 } from '@/lib/homeLayout';
 import { preloadCatalogModels } from '@/lib/planner/catalogMeshModels';
+import {
+  normalizeStories,
+  resolveRoomStoryIndex,
+  siteFootprintRooms,
+  storyFloorYFt,
+} from '@/lib/stories';
 
 export function HomeScene({
   rooms,
@@ -35,6 +55,8 @@ export function HomeScene({
   site,
   structures = [],
   onToggleSite,
+  stories,
+  focusStoryIndex = null,
 }: {
   rooms: Room[];
   /** Rooms to render in 3D; defaults to all `rooms`. Site + home view omits linked outbuilding interiors. */
@@ -49,32 +71,63 @@ export function HomeScene({
   site?: SiteSettings;
   structures?: SiteStructure[];
   onToggleSite?: (show: boolean) => void;
+  stories?: StoryDef[];
+  /** When set, dim rooms on other stories (null = show all levels equally). */
+  focusStoryIndex?: number | null;
 }) {
   const [showWalls, setShowWalls] = useState(true);
-  const visibleRooms = displayRooms ?? rooms;
-  const houseBounds = useMemo(() => computeProjectBounds(visibleRooms), [visibleRooms]);
+  const [showGrid, setShowGrid] = useState(true);
+  const [showCeilings, setShowCeilings] = useState(false);
+  const storyList = useMemo(() => normalizeStories(stories), [stories]);
+  const visibleRooms = useMemo(() => {
+    const base = displayRooms ?? rooms;
+    if (focusStoryIndex == null) return base;
+    return base.filter((r) => resolveRoomStoryIndex(r) === focusStoryIndex);
+  }, [displayRooms, rooms, focusStoryIndex]);
+  const footprintRooms = useMemo(() => siteFootprintRooms(rooms), [rooms]);
+  const houseBounds = useMemo(
+    () => computeProjectBounds(focusStoryIndex == null ? footprintRooms : visibleRooms),
+    [footprintRooms, visibleRooms, focusStoryIndex],
+  );
   const sceneBounds = useMemo(() => {
     if (showSite && site) {
-      return computeSiteSceneBounds(site, visibleRooms, structures);
+      return computeSiteSceneBounds(site, footprintRooms, structures);
     }
     return houseBounds;
-  }, [showSite, site, visibleRooms, structures, houseBounds]);
+  }, [showSite, site, footprintRooms, structures, houseBounds]);
 
   useEffect(() => {
     preloadCatalogModels();
   }, []);
+
+  const stackTopY = useMemo(() => {
+    const source = displayRooms ?? rooms;
+    if (source.length === 0) return 12;
+    return Math.max(
+      ...source.map(
+        (r) =>
+          storyFloorYFt(storyList, resolveRoomStoryIndex(r)) +
+          (r.peakHeightFt ?? r.heightFt),
+      ),
+      12,
+    );
+  }, [displayRooms, rooms, storyList]);
 
   const cameraPosition: [number, number, number] = useMemo(() => {
     const diag = Math.hypot(sceneBounds.widthFt, sceneBounds.depthFt);
     const lift = showSite ? 1.15 : 1;
     return [
       sceneBounds.centerX + diag * 0.55 * lift,
-      Math.max(diag * 0.72 * lift, showSite ? 24 : 18),
+      Math.max(diag * 0.72 * lift, stackTopY * 1.15, showSite ? 24 : 18),
       sceneBounds.centerZ + diag * 0.82 * lift,
     ];
-  }, [sceneBounds, showSite]);
+  }, [sceneBounds, showSite, stackTopY]);
 
-  const target: [number, number, number] = [sceneBounds.centerX, 0, sceneBounds.centerZ];
+  const target: [number, number, number] = [
+    sceneBounds.centerX,
+    Math.max(0, stackTopY * 0.25),
+    sceneBounds.centerZ,
+  ];
 
   return (
     <div className="relative h-full min-h-[520px] w-full overflow-hidden rounded-xl border border-stone-300 bg-[#ebe8e3]">
@@ -102,11 +155,20 @@ export function HomeScene({
           </div>
         )}
       </div>
-      <WallToggleButton
-        showWalls={showWalls}
-        onToggle={() => setShowWalls((v) => !v)}
-        className="absolute right-3 top-3 z-10"
-      />
+      <div className="absolute right-3 top-3 z-10 flex flex-col items-end gap-2">
+        <WallToggleButton
+          showWalls={showWalls}
+          onToggle={() => setShowWalls((v) => !v)}
+        />
+        <CeilingToggleButton
+          showCeilings={showCeilings}
+          onToggle={() => setShowCeilings((v) => !v)}
+        />
+        <GridToggleButton
+          showGrid={showGrid}
+          onToggle={() => setShowGrid((v) => !v)}
+        />
+      </div>
       <Canvas
         camera={{ position: cameraPosition, fov: 45 }}
         dpr={[1, 1.25]}
@@ -114,37 +176,71 @@ export function HomeScene({
         performance={{ min: 0.5 }}
       >
         <color attach="background" args={[showSite ? '#c8dcc8' : '#ebe8e3']} />
-        <Environment preset={showSite ? 'park' : 'apartment'} environmentIntensity={showSite ? 0.55 : 0.45} />
-        <ambientLight intensity={showSite ? 0.72 : 0.6} />
-        <directionalLight position={[20, 28, 14]} intensity={showSite ? 1.25 : 1.1} castShadow={false} />
-        <directionalLight position={[-12, 18, -8]} intensity={showSite ? 0.35 : 0.3} />
+        <Environment
+          preset={showSite ? 'park' : 'apartment'}
+          environmentIntensity={showSite ? 0.68 : 0.62}
+        />
+        <ambientLight intensity={showSite ? 0.85 : 0.8} />
+        <hemisphereLight
+          args={showSite ? ['#dce9f5', '#9aab8c', 0.42] : ['#f5f0e8', '#c4b8a8', 0.35]}
+        />
+        <directionalLight
+          position={[20, 28, 14]}
+          intensity={showSite ? 1.05 : 0.95}
+          color="#fff8f0"
+          castShadow={false}
+        />
+        <directionalLight
+          position={[-12, 18, -8]}
+          intensity={showSite ? 0.38 : 0.28}
+          color="#e8eef5"
+        />
 
         {showSite && site ? <SiteSceneLayer site={site} structures={structures} /> : null}
 
-        <Grid
-          args={[sceneBounds.widthFt + (showSite ? 40 : 24), sceneBounds.depthFt + (showSite ? 40 : 24)]}
-          cellSize={1}
-          sectionSize={showSite ? 10 : 5}
-          cellColor={showSite ? '#8a9288' : '#d6d3d1'}
-          sectionColor={showSite ? '#4b5549' : '#a8a29e'}
-          fadeDistance={Math.max(sceneBounds.widthFt, sceneBounds.depthFt) * (showSite ? 4 : 3)}
-          position={[sceneBounds.centerX, 0.005, sceneBounds.centerZ]}
-          raycast={() => null}
-        />
+        {showGrid ? (
+          <Grid
+            args={[sceneBounds.widthFt + (showSite ? 40 : 24), sceneBounds.depthFt + (showSite ? 40 : 24)]}
+            cellSize={1}
+            sectionSize={showSite ? 10 : 5}
+            cellColor={showSite ? '#8a9288' : '#d6d3d1'}
+            sectionColor={showSite ? '#4b5549' : '#a8a29e'}
+            fadeDistance={Math.max(sceneBounds.widthFt, sceneBounds.depthFt) * (showSite ? 4 : 3)}
+            position={[sceneBounds.centerX, 0.005, sceneBounds.centerZ]}
+            raycast={() => null}
+          />
+        ) : null}
 
-        {visibleRooms.map((room) => {
+        {(displayRooms ?? rooms).map((room) => {
+          if (
+            focusStoryIndex != null &&
+            resolveRoomStoryIndex(room) !== focusStoryIndex
+          ) {
+            return null;
+          }
           const focused = focusRoomId === null || focusRoomId === room.roomId;
-          const wallPlans = planRoomWalls(room, rooms, connections, exteriorDoors);
+          const storyPeers = rooms.filter(
+            (r) => resolveRoomStoryIndex(r) === resolveRoomStoryIndex(room),
+          );
+          const wallPlans = planRoomWalls(
+            room,
+            storyPeers,
+            connections,
+            exteriorDoors,
+          );
           const placements = placementsByRoomId[room.roomId] ?? [];
+          const floorY = storyFloorYFt(storyList, resolveRoomStoryIndex(room));
           return (
             <RoomVolume
               key={room.roomId}
               room={room}
+              floorY={floorY}
               wallPlans={wallPlans}
               placements={placements}
               catalogById={catalogById}
               focused={focused}
               showWalls={showWalls}
+              showCeilings={showCeilings}
               onClick={() => onSelectRoom?.(room.roomId)}
             />
           );
@@ -152,6 +248,7 @@ export function HomeScene({
 
         <FocusCameraEffect
           rooms={rooms}
+          stories={storyList}
           focusRoomId={focusRoomId}
           fallbackTarget={target}
           fallbackPosition={cameraPosition}
@@ -173,11 +270,13 @@ export function HomeScene({
 
 function FocusCameraEffect({
   rooms,
+  stories,
   focusRoomId,
   fallbackTarget,
   fallbackPosition,
 }: {
   rooms: Room[];
+  stories: StoryDef[];
   focusRoomId: string | null;
   fallbackTarget: [number, number, number];
   fallbackPosition: [number, number, number];
@@ -202,78 +301,81 @@ function FocusCameraEffect({
       : null;
 
     let targetX = fallbackTarget[0];
+    let targetY = fallbackTarget[1];
     let targetZ = fallbackTarget[2];
     let camX = fallbackPosition[0];
     let camY = fallbackPosition[1];
     let camZ = fallbackPosition[2];
 
     if (room) {
+      const floorY = storyFloorYFt(stories, resolveRoomStoryIndex(room));
       const cx = (room.layoutX ?? 0) + room.widthFt / 2;
       const cz = (room.layoutZ ?? 0) + room.depthFt / 2;
       const diag = Math.hypot(room.widthFt, room.depthFt);
       targetX = cx;
+      targetY = floorY + room.heightFt * 0.35;
       targetZ = cz;
       camX = cx + diag * 0.55;
-      camY = Math.max(diag * 0.75, room.heightFt * 1.4);
+      camY = floorY + Math.max(diag * 0.75, room.heightFt * 1.4);
       camZ = cz + diag * 0.85;
     }
 
     camera.position.set(camX, camY, camZ);
     if (controls) {
-      controls.target.set(targetX, 0, targetZ);
+      controls.target.set(targetX, targetY, targetZ);
       controls.update();
     }
-    camera.lookAt(targetX, 0, targetZ);
+    camera.lookAt(targetX, targetY, targetZ);
     invalidate();
-  }, [focusRoomId, rooms, camera, controls, invalidate, fallbackTarget, fallbackPosition]);
+  }, [
+    focusRoomId,
+    rooms,
+    stories,
+    camera,
+    controls,
+    invalidate,
+    fallbackTarget,
+    fallbackPosition,
+  ]);
 
   return null;
 }
 
 function RoomVolume({
   room,
+  floorY,
   wallPlans,
   placements,
   catalogById,
   focused,
   showWalls,
+  showCeilings,
   onClick,
 }: {
   room: Room;
+  floorY: number;
   wallPlans: RoomWallPlan[];
   placements: Placement[];
   catalogById: Record<string, CatalogItem>;
   focused: boolean;
   showWalls: boolean;
+  showCeilings: boolean;
   onClick: () => void;
 }) {
   const lx = room.layoutX ?? 0;
   const lz = room.layoutZ ?? 0;
   const opacity = focused ? 1 : 0.25;
   const wallColor = focused ? '#efeae3' : '#d4d0cb';
-  const floorColor =
-    room.type === 'kitchen'
-      ? '#d8cdb7'
-      : room.type === 'bathroom'
-        ? '#d2dde2'
-        : room.type === 'bedroom'
-          ? '#dfd6f0'
-          : room.type === 'hallway'
-            ? '#ebe8e3'
-            : '#e0ddd8';
 
   return (
     <group
-      position={[lx, 0, lz]}
+      position={[lx, floorY, lz]}
       onPointerDown={(e) => {
         e.stopPropagation();
         onClick();
       }}
     >
-      <mesh position={[room.widthFt / 2, 0.01, room.depthFt / 2]} raycast={() => null}>
-        <boxGeometry args={[room.widthFt, 0.02, room.depthFt]} />
-        <meshStandardMaterial color={floorColor} transparent={!focused} opacity={opacity} />
-      </mesh>
+      <RoomFloor room={room} opacity={opacity} transparent={!focused} y={0.01} />
 
       {/* Room label floating just above floor */}
       <RoomLabel
@@ -292,6 +394,10 @@ function RoomVolume({
           wallColor={wallColor}
           wallOpacity={opacity}
         />
+      ) : null}
+
+      {showCeilings ? (
+        <RoomCeiling room={room} opacity={focused ? 0.85 : 0.2} transparent={!focused} />
       ) : null}
 
       {placements.map((p) => (
@@ -367,6 +473,7 @@ function PlacementBlock({
   const x = placement.positionX + oriented.widthFt / 2;
   const z = placement.positionZ + oriented.depthFt / 2;
   const cy = y + resolved.heightFt / 2;
+  const ceilingCapFt = ceilingHeightAt(room, x, z);
 
   return (
     <group position={[x, cy, z]} rotation={[0, placement.rotationY, 0]}>
@@ -387,7 +494,7 @@ function PlacementBlock({
           pickable={false}
           opacity={opacity}
           transparent={transparent}
-          roomHeightFt={room.heightFt}
+          roomHeightFt={ceilingCapFt}
         />
       ) : (
         <mesh raycast={() => null}>
