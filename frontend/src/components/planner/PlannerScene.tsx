@@ -37,8 +37,14 @@ import { GridToggleButton } from '@/components/planner/GridToggleButton';
 import { RoomCeiling } from '@/components/planner/RoomCeiling';
 import { RoomFloor } from '@/components/planner/RoomFloor';
 import { WallToggleButton } from '@/components/planner/WallToggleButton';
+import { WalkModeControls } from '@/components/planner/WalkModeControls';
+import {
+  WalkModeHint,
+  WalkModeToggleButton,
+} from '@/components/planner/WalkModeToggleButton';
 import { ceilingHeightAt } from '@/lib/ceilingGeometry';
 import { preloadCatalogModels } from '@/lib/planner/catalogMeshModels';
+import { wallSegmentsLocal } from '@/lib/walkCollision';
 
 const INCHES_PER_FOOT = 12;
 
@@ -85,6 +91,8 @@ export function PlannerScene({
   const [showWalls, setShowWalls] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
   const [showCeilings, setShowCeilings] = useState(true);
+  const [walkMode, setWalkMode] = useState(false);
+  const [walkLocked, setWalkLocked] = useState(false);
   const isDraggingRef = useRef(false);
   const setDragging = (value: boolean) => {
     isDraggingRef.current = value;
@@ -118,6 +126,25 @@ export function PlannerScene({
     () => buildWallPlans(room, projectRooms, connections, exteriorDoors),
     [room, projectRooms, connections, exteriorDoors],
   );
+  const walkSegments = useMemo(
+    () => wallSegmentsLocal(room, wallPlans),
+    [room, wallPlans],
+  );
+  const walkSpawn = useMemo(
+    () => ({
+      x: room.widthFt / 2,
+      z: room.depthFt / 2,
+      yaw: 0,
+    }),
+    [room.widthFt, room.depthFt],
+  );
+
+  useEffect(() => {
+    if (walkMode) {
+      onCancelPlaceMode?.();
+      onSelectPlacement(null);
+    }
+  }, [walkMode, onCancelPlaceMode, onSelectPlacement]);
 
   const hasConnections = wallPlans.some((w) => w.openings.length > 0);
 
@@ -265,6 +292,10 @@ export function PlannerScene({
       }}
     >
       <div className="absolute right-3 top-3 z-10 flex flex-col items-end gap-2">
+        <WalkModeToggleButton
+          walkMode={walkMode}
+          onToggle={() => setWalkMode((v) => !v)}
+        />
         <WallToggleButton
           showWalls={showWalls}
           onToggle={() => setShowWalls((v) => !v)}
@@ -278,19 +309,24 @@ export function PlannerScene({
           onToggle={() => setShowGrid((v) => !v)}
         />
       </div>
-      <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-xl border border-white/50 bg-slate-900/75 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-sm">
-        <p>
-          <strong>Drag</strong> rotate · <strong>Shift+drag</strong> pan · <strong>Right/middle-drag</strong> pan ·{' '}
-          <strong>Arrow keys</strong> move · <strong>Scroll</strong> zoom · click floor to deselect · <strong>Esc</strong> cancel
-        </p>
-      </div>
+      {walkMode ? (
+        <WalkModeHint walkMode={walkMode} locked={walkLocked} />
+      ) : (
+        <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-xl border border-white/50 bg-slate-900/75 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-sm">
+          <p>
+            <strong>Drag</strong> rotate · <strong>Shift+drag</strong> pan ·{' '}
+            <strong>Right/middle-drag</strong> pan · <strong>Scroll</strong> zoom ·{' '}
+            <strong>Walk</strong> for first-person
+          </p>
+        </div>
+      )}
       <Canvas
-        camera={{ position: cameraPosition, fov: 45 }}
+        camera={{ position: cameraPosition, fov: walkMode ? 70 : 45 }}
         dpr={[1, 1.25]}
-        frameloop="demand"
+        frameloop={walkMode ? 'always' : 'demand'}
         performance={{ min: 0.5 }}
         onPointerMissed={() => {
-          if (isDraggingRef.current) return;
+          if (isDraggingRef.current || walkMode) return;
           onSelectPlacement(null);
         }}
       >
@@ -409,6 +445,13 @@ export function PlannerScene({
           target={[size.w / 2, 0, size.d / 2]}
           isDraggingItem={isDragging}
           placementMode={placementModeActive}
+          disabled={walkMode}
+        />
+        <WalkModeControls
+          enabled={walkMode}
+          segments={walkSegments}
+          spawn={walkSpawn}
+          onLockChange={setWalkLocked}
         />
       </Canvas>
     </div>

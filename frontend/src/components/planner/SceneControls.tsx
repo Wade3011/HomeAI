@@ -25,17 +25,20 @@ export function SceneControls({
   target,
   isDraggingItem,
   placementMode = false,
+  disabled = false,
 }: {
   target: [number, number, number];
   isDraggingItem: boolean;
   /** Catalog item armed — disable orbit so clicks place cabinets */
   placementMode?: boolean;
+  /** Fully disable orbit (e.g. first-person walk mode). */
+  disabled?: boolean;
 }) {
   const ref = useRef<OrbitControlsImpl>(null);
   const panWithLeftRef = useRef(false);
   const { gl, invalidate } = useThree();
 
-  const orbitEnabled = !isDraggingItem && !placementMode;
+  const orbitEnabled = !disabled && !isDraggingItem && !placementMode;
 
   useEffect(() => {
     const controls = ref.current;
@@ -107,18 +110,25 @@ export function SceneControls({
       controls.touches = { ...DEFAULT_TOUCHES };
     }
 
-    controls.listenToKeyEvents(gl.domElement);
     controls.keys = {
       LEFT: 'ArrowLeft',
       UP: 'ArrowUp',
       RIGHT: 'ArrowRight',
       BOTTOM: 'ArrowDown',
     };
+    if (orbitEnabled) {
+      controls.listenToKeyEvents(gl.domElement);
+    } else {
+      controls.stopListenToKeyEvents();
+    }
     controls.target.set(...target);
 
     const onChange = () => invalidate();
     controls.addEventListener('change', onChange);
-    return () => controls.removeEventListener('change', onChange);
+    return () => {
+      controls.removeEventListener('change', onChange);
+      controls.stopListenToKeyEvents();
+    };
   }, [gl, target, orbitEnabled, placementMode, invalidate]);
 
   return (

@@ -36,11 +36,19 @@ import {
 } from '@/lib/homeLayout';
 import { preloadCatalogModels } from '@/lib/planner/catalogMeshModels';
 import {
+  MAIN_STORY_INDEX,
   normalizeStories,
   resolveRoomStoryIndex,
+  roomsOnStory,
   siteFootprintRooms,
   storyFloorYFt,
 } from '@/lib/stories';
+import { WalkModeControls } from '@/components/planner/WalkModeControls';
+import {
+  WalkModeHint,
+  WalkModeToggleButton,
+} from '@/components/planner/WalkModeToggleButton';
+import { wallSegmentsWorld } from '@/lib/walkCollision';
 
 export function HomeScene({
   rooms,
@@ -78,6 +86,8 @@ export function HomeScene({
   const [showWalls, setShowWalls] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
   const [showCeilings, setShowCeilings] = useState(false);
+  const [walkMode, setWalkMode] = useState(false);
+  const [walkLocked, setWalkLocked] = useState(false);
   const storyList = useMemo(() => normalizeStories(stories), [stories]);
   const visibleRooms = useMemo(() => {
     const base = displayRooms ?? rooms;
@@ -85,10 +95,57 @@ export function HomeScene({
     return base.filter((r) => resolveRoomStoryIndex(r) === focusStoryIndex);
   }, [displayRooms, rooms, focusStoryIndex]);
   const footprintRooms = useMemo(() => siteFootprintRooms(rooms), [rooms]);
+  /** Walk collision uses one story at a time (shared XZ across levels). */
+  const walkStoryIndex = focusStoryIndex ?? MAIN_STORY_INDEX;
+  const walkRooms = useMemo(() => {
+    const house = (displayRooms ?? rooms).filter((r) => !r.linkedSiteStructureId);
+    return roomsOnStory(house, walkStoryIndex);
+  }, [displayRooms, rooms, walkStoryIndex]);
+  const walkSegments = useMemo(
+    () =>
+      walkRooms.flatMap((room) =>
+        wallSegmentsWorld(
+          room,
+          planRoomWalls(room, walkRooms, connections, exteriorDoors),
+        ),
+      ),
+    [walkRooms, connections, exteriorDoors],
+  );
   const houseBounds = useMemo(
     () => computeProjectBounds(focusStoryIndex == null ? footprintRooms : visibleRooms),
     [footprintRooms, visibleRooms, focusStoryIndex],
   );
+  const walkSpawn = useMemo(() => {
+    const focus =
+      (focusRoomId
+        ? walkRooms.find((r) => r.roomId === focusRoomId)
+        : null) ?? walkRooms[0];
+    if (!focus) {
+      return { x: houseBounds.centerX, z: houseBounds.centerZ, yaw: 0 };
+    }
+    return {
+      x: (focus.layoutX ?? 0) + focus.widthFt / 2,
+      z: (focus.layoutZ ?? 0) + focus.depthFt / 2,
+      yaw: 0,
+    };
+  }, [focusRoomId, walkRooms, houseBounds.centerX, houseBounds.centerZ]);
+  const walkFloorY = storyFloorYFt(storyList, walkStoryIndex);
+  const resolveWalkFloorY = useMemo(() => {
+    return (x: number, z: number) => {
+      const room = walkRooms.find((r) => {
+        const lx = r.layoutX ?? 0;
+        const lz = r.layoutZ ?? 0;
+        return (
+          x >= lx &&
+          x <= lx + r.widthFt &&
+          z >= lz &&
+          z <= lz + r.depthFt
+        );
+      });
+      if (!room) return walkFloorY;
+      return storyFloorYFt(storyList, resolveRoomStoryIndex(room));
+    };
+  }, [walkRooms, walkFloorY, storyList]);
   const sceneBounds = useMemo(() => {
     if (showSite && site) {
       return computeSiteSceneBounds(site, footprintRooms, structures);
@@ -156,6 +213,10 @@ export function HomeScene({
         )}
       </div>
       <div className="absolute right-3 top-3 z-10 flex flex-col items-end gap-2">
+        <WalkModeToggleButton
+          walkMode={walkMode}
+          onToggle={() => setWalkMode((v) => !v)}
+        />
         <WallToggleButton
           showWalls={showWalls}
           onToggle={() => setShowWalls((v) => !v)}
@@ -169,10 +230,11 @@ export function HomeScene({
           onToggle={() => setShowGrid((v) => !v)}
         />
       </div>
+      <WalkModeHint walkMode={walkMode} locked={walkLocked} />
       <Canvas
         camera={{ position: cameraPosition, fov: 45 }}
         dpr={[1, 1.25]}
-        frameloop="demand"
+        frameloop={walkMode ? 'always' : 'demand'}
         performance={{ min: 0.5 }}
       >
         <color attach="background" args={[showSite ? '#c8dcc8' : '#ebe8e3']} />
@@ -246,22 +308,36 @@ export function HomeScene({
           );
         })}
 
-        <FocusCameraEffect
-          rooms={rooms}
-          stories={storyList}
-          focusRoomId={focusRoomId}
-          fallbackTarget={target}
-          fallbackPosition={cameraPosition}
-        />
+        {!walkMode && (
+          <FocusCameraEffect
+            rooms={rooms}
+            stories={storyList}
+            focusRoomId={focusRoomId}
+            fallbackTarget={target}
+            fallbackPosition={cameraPosition}
+          />
+        )}
 
         <OrbitControls
           makeDefault
+          enabled={!walkMode}
+          enableRotate={!walkMode}
+          enablePan={!walkMode}
+          enableZoom={!walkMode}
           target={target}
           enableDamping
           dampingFactor={0.12}
           maxPolarAngle={Math.PI / 2.05}
           minDistance={4}
           maxDistance={Math.max(sceneBounds.widthFt, sceneBounds.depthFt) * (showSite ? 8 : 6) + 20}
+        />
+        <WalkModeControls
+          enabled={walkMode && walkRooms.length > 0}
+          segments={walkSegments}
+          spawn={walkSpawn}
+          floorY={walkFloorY}
+          resolveFloorY={resolveWalkFloorY}
+          onLockChange={setWalkLocked}
         />
       </Canvas>
     </div>

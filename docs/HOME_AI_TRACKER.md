@@ -20,7 +20,7 @@ This file is the single roadmap for exterior, ceilings, and the Notion tracker i
 3. Quick UX: **Hide grid toggle** ✓
 4. Site depth: **Fences** → **Breezeways** ✓ (MVP)
 5. Product feel: **Presets** + **Materials / flooring FE** ✓ (MVP)
-6. Bigger bets: **Export** ✓ · **Import plans** ✓ · **Stories** ✓ (incl. loft/attic partial) · Google Maps / lot import · Walkable rooms
+6. Bigger bets: **Export** ✓ · **Import plans** ✓ · **Stories** ✓ · **Walkable** ✓ · Google Maps / lot import
 7. **AI design coach** — **backend / Bedrock only. No AI on the frontend. Do not implement.**
 
 ---
@@ -41,7 +41,7 @@ Status from Notion was empty; status below reflects codebase + docs as of 2026-0
 | 6 | More of the actual design of the product — flooring tile FE | **Done (MVP)** | Per-room floor finishes in 2D/3D + picker |
 | 7 | Import house plans | **Done (MVP)** | Image underlay + scale + trace rooms; JSON layout import |
 | 8 | Presets — modern, farmhouse, etc. | **Done (MVP)** | Style packs apply floors project-wide; Kraenzlein seeds farmhouse |
-| 9 | Stand in the room, make it walkable | Not started | First-person / walkable camera |
+| 9 | Stand in the room, make it walkable | **Done (MVP)** | Walk mode: arrows/WASD, mouse look, wall collision |
 | 10 | Stories (multi-level) | **Done (MVP)** | storyIndex + level switcher; loft/attic partial footprint |
 | 10a | Second floor | **Done (MVP)** | Add upper / loft / attic; 3D Y stack |
 | 10b | Basements | **Done (MVP)** | Add basement below grade; floor plan + 3D |
@@ -249,10 +249,11 @@ Items from the Home AI Tracker board that are **not** fully covered by exterior/
 - [x] New rooms inherit active pack; Kraenzlein / floor-plan presets seed farmhouse
 - [ ] Later: pack also sets fixtures / wall colors; more layout presets beyond Kraenzlein
 
-## 9. Stand in the room / walkable
-- [ ] First-person or walk mode camera in planner / whole-home
-- [ ] Collision with walls; eye-height camera
-- [ ] Toggle with existing orbit view
+## 9. Stand in the room / walkable — **done (MVP)**
+- [x] Walk mode in room planner + whole-home 3D (toggle with orbit)
+- [x] Arrow keys / WASD move; mouse look (pointer lock); eye-height camera
+- [x] Wall collision stoppers; furniture ignored (walk “over” sofas/tables at eye height)
+- [ ] Later: crouch, stair climbing between stories, mobile joystick
 
 ## 10. Stories (multi-level) — **done (MVP)**
 
